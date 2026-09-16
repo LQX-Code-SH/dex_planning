@@ -1,4 +1,4 @@
-"""apps 共享装配：管线模块定位 + 规划上下文构建 + 产物组装（实施计划步 5）。
+"""core 共享装配：管线模块定位 + 规划上下文构建 + 产物组装（步 5，v0.2 自 apps 下沉至 L2）。
 
 管线（demo circle_planning_7axis.py）按 Q3 决策留在原仓库；定位顺序：
 TIENKUNG_PLANNING_PIPELINE 显式路径 > description root 旁同目录。
@@ -49,6 +49,14 @@ def load_robot(profile=None):
     return profile, Robot.from_files(urdf, srdf)
 
 
+def build_robot(profile_name=None):
+    """profile 名/路径 -> (profile, Robot)；facade 能力件的独立装载入口。
+
+    与 load_robot 同体；不经 demo 模块、不读 TIENKUNG_PLANNING_PIPELINE。
+    """
+    return load_robot(profile_name)
+
+
 def make_context(argv):
     """复刻回归进入路径：configure → Robot（profile 装载）→ build_cfg → ACM 修复。"""
     import numpy as np
@@ -64,11 +72,11 @@ def make_context(argv):
         else:
             cfg = m.build_cfg(robot, side, m.FINGER_NAME, m.MODE, seed)
         if m.MODE != "tcp":
-            cfg["other_pos"] = {**cfg.get("other_pos", {}),
-                                **m.display_other_pos(side, m.FINGER_LIST)}
+            cfg.other_pos = {**cfg.other_pos,
+                             **m.display_other_pos(side, m.FINGER_LIST)}
         cfgs[side] = cfg
     for side in m.SIDES:
-        op = cfgs[side].get("other_pos", {})
+        op = cfgs[side].other_pos
         if op:
             robot.env.setState(list(op), np.array([op[n] for n in op], float))
     robot.set_collision_margin(m.COLLISION_MARGIN)
@@ -101,7 +109,7 @@ def shape_to_group(ctx, side, shape, points, Q, ts, frozen=None):
     perr = np.linalg.norm(tip[:n] - points[:n], axis=1) * 1000
     dev = np.abs((tip[:n] - cfg.center) @ m.PLANE_NORMAL) * 1000
     secondary = {}
-    for tf, d in cfg.get("deltas", []):
+    for tf, d in (cfg.deltas or []):
         sub = []
         for qq in Q[:n]:
             cfg.set_state(qq)

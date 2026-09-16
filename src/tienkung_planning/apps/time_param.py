@@ -14,7 +14,7 @@ import sys
 
 import numpy as np
 
-from tienkung_planning.apps import _pipeline
+from tienkung_planning.core import pipeline
 from tienkung_planning.contracts import PlanArtifact
 from tienkung_planning.core import tess
 
@@ -28,7 +28,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     art = PlanArtifact.load(args.inp)
-    _, robot = _pipeline.load_robot()
+    _, robot = pipeline.load_robot()
     frame = art.meta.options.get("frame", "pelvis")
     changed = False
     for side, gp in art.groups.items():

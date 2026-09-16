@@ -19,13 +19,11 @@ class ModeConfig:
     mode_name: str                        # full / fixed / tcp
     side: str                             # right / left
     group: str                            # 求解组（多指模式组名只由主指尖决定，D3）
-    mode: str = ""                        # 兼容别名 = mode_name（步 4 移除）
 
     # --- 帧与关节 ---
     tcp_frame: str = ""                   # Descartes 跟踪帧——与 tip_frame 不同（tcp 模式二者相等）
     tip_frame: str = ""                   # 跟踪的指尖链接
     state_joint_names: list = field(default_factory=list)   # 完整状态关节名（positions 对齐的权威）
-    joint_names: list = field(default_factory=list)         # 兼容别名 = state_joint_names（步 4 移除）
 
     # --- 变量空间 ---
     var_names: Optional[list] = None      # 变量名序列（含腰？含 prox？）
@@ -56,40 +54,6 @@ class ModeConfig:
     deltas: Optional[list] = None         # B2 副指随动 [(tip_frame, delta(3,))]
     tip_frames: Optional[dict] = None     # B2 副指 tip_frame 表
     extra_fingers: Optional[list] = None  # B2 副指列表
-
-    def __post_init__(self):
-        # 兼容别名：旧消费方仍按 dict 键名访问的字段（步 4 统一移除）
-        if not self.mode:
-            self.mode = self.mode_name
-        if not self.joint_names:
-            self.joint_names = self.state_joint_names
-
-    def get(self, key, default=None):
-        """过渡期 dict 兼容：cfg.get("x") -> 属性访问；None 视为键不存在
-        （可选字段在 dataclass 里以 None 表达，旧 dict 里是键缺席）（步 4 移除）。"""
-        v = getattr(self, self._legacy(key), default)
-        return default if v is None else v
-
-    def __contains__(self, key):
-        """过渡期 dict 兼容：`"x" in cfg` -> 属性非 None（步 4 移除）。"""
-        return getattr(self, self._legacy(key), None) is not None
-
-    def __getitem__(self, key):
-        """过渡期 dict 兼容：cfg["x"] -> cfg.x（步 4 移除）。"""
-        try:
-            return getattr(self, self._legacy(key))
-        except AttributeError:
-            raise KeyError(key)
-
-    def __setitem__(self, key, value):
-        """过渡期 dict 兼容：cfg["x"] = v -> setattr（步 4 移除）。"""
-        setattr(self, self._legacy(key), value)
-
-    @staticmethod
-    def _legacy(key):
-        """旧 cfg dict 键名 -> ModeConfig 字段名（步 4 统一移除）。"""
-        return {"ik_fn": "ik", "tcp": "tcp_frame",
-                "set_frozen_waist": "frozen_waist_setter"}.get(key, key)
 
 
 @runtime_checkable

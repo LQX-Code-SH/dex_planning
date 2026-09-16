@@ -32,10 +32,10 @@ for side in m.SIDES:
         cfg = m.build_cfg(robot, side, m.FINGER_NAME, m.MODE, seed)
     # 限位已由 build_cfg 共享装配统一填充（_finalize_limits）
     if m.MODE != "tcp":
-        cfg["other_pos"] = {**cfg.get("other_pos", {}), **m.display_other_pos(side, m.FINGER_LIST)}
+        cfg.other_pos = {**cfg.other_pos, **m.display_other_pos(side, m.FINGER_LIST)}
     cfgs[side] = cfg
 for side in m.SIDES:
-    op = cfgs[side].get("other_pos", {})
+    op = cfgs[side].other_pos
     if op:
         robot.env.setState(list(op), np.array([op[n] for n in op], float))
 robot.set_collision_margin(m.COLLISION_MARGIN)
@@ -46,14 +46,14 @@ v = np.cross(m.PLANE_NORMAL, u)
 
 # A3 预检（正常 offset 应通过）
 for side, cfg in cfgs.items():
-    if "tip_offset" in cfg:
-        R, p_off = cfg["plan_rotation"], cfg["tip_offset"]
+    if cfg.tip_offset is not None:
+        R, p_off = cfg.plan_rotation, cfg.tip_offset
         pose = lambda p: m.Pose.from_matrix_position(R, list(p - R @ p_off))
     else:
-        R = cfg["rotation"]
+        R = cfg.rotation
         pose = lambda p: m.Pose.from_matrix_position(R, list(p))
     for d in (u, v, -u, -v):
-        assert cfg["ik_fn"](pose(cfg["center"] + m.SIZE * d), cfg["seed_plan"]) is not None, \
+        assert cfg.ik(pose(cfg.center + m.SIZE * d), cfg.seed_plan) is not None, \
             f"预检误报: {side} {d}"
 print("PRECHECK pass")
 
@@ -77,21 +77,21 @@ for shape in m.SHAPES:
         if ts is None:
             print(f"FAIL {shape} {side}: TOTG 未产出时间戳")
             ok = False
-        w = Q[:, :3] if cfgs[side]["group"].endswith(f"waist_{primary}") else None
+        w = Q[:, :3] if cfgs[side].group.endswith(f"waist_{primary}") else None
         if w is not None:
             waist_span.setdefault(side, []).append(float(np.abs(w).max()))
         tip = np.array([m.tip_pose(robot, cfgs[side], qq)[0] for qq in Q])
         n = min(len(Q), len(points))
         perr = np.linalg.norm(tip[:n] - points[:n], axis=1).max() * 1000
-        dev = np.abs((tip[:n] - cfgs[side]["center"]) @ m.PLANE_NORMAL).max() * 1000
+        dev = np.abs((tip[:n] - cfgs[side].center) @ m.PLANE_NORMAL).max() * 1000
         if perr > 0.1 or dev > 0.5:
             print(f"FAIL {shape} {side}: 路径误差 {perr:.4f}mm 离面 {dev:.4f}mm")
             ok = False
         # B2 副指随动精度
-        for tf, d in cfgs[side].get("deltas", []):
+        for tf, d in (cfgs[side].deltas or []):
             sub = []
             for qq in Q[:n]:
-                cfgs[side]["set_state"](qq)
+                cfgs[side].set_state(qq)
                 sub.append(np.array(
                     robot.env.getState().link_transforms[tf].translation, float))
             serr = np.linalg.norm(np.asarray(sub) - (points[:n] + d), axis=1).max() * 1000

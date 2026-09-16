@@ -19,9 +19,15 @@ from tienkung_planning.contracts.artifact import (
     profile_hash,
     save,
 )
+from tienkung_planning.contracts.exceptions import (
+    PlannerError,
+    TienKungPlanningError,
+    UnavailableError,
+)
 
 __all__ = [
     "PlanArtifact", "GroupPlan", "PlanMeta", "PathErrors", "SecondaryTrack",
     "TransitionInfo", "ContractVersionError", "artifact_hash", "profile_hash",
     "save", "load", "SCHEMA_MAJOR", "SCHEMA_MINOR", "SUPPORTED_MAJOR",
+    "TienKungPlanningError", "UnavailableError", "PlannerError",
 ]

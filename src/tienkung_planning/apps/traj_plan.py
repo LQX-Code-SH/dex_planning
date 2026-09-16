@@ -14,8 +14,8 @@ import sys
 
 import numpy as np
 
-from tienkung_planning.apps._pipeline import (make_artifact, make_context,
-                                              shape_to_group)
+from tienkung_planning.core.pipeline import (make_artifact, make_context,
+                                             shape_to_group)
 from tienkung_planning.contracts import artifact_hash
 
 

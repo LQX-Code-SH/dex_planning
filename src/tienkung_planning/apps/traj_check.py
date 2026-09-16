@@ -66,9 +66,9 @@ def check_errors(art, max_err, max_off, max_sec):
 
 def check_contacts(art, stride):
     """全 mesh 碰撞扫描（N6：可复现接触对报告，附输入 hash）。"""
-    from tienkung_planning.apps import _pipeline
+    from tienkung_planning.core import pipeline
     from tienkung_planning.core import tess
-    _, robot = _pipeline.load_robot()
+    _, robot = pipeline.load_robot()
     margin = art.meta.options.get("collision_margin", 0.02)
     mgr = tess.contact_manager(robot.env, margin)
     req = tess.contact_request()

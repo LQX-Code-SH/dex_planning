@@ -19,6 +19,8 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from typing import Literal, Optional
 
+from tienkung_planning.contracts.exceptions import TienKungPlanningError
+
 SCHEMA_MAJOR = 1          # major：load 拒绝判定的唯一依据（§4.5）
 SCHEMA_MINOR = 0
 
@@ -26,7 +28,7 @@ SCHEMA_MINOR = 0
 SUPPORTED_MAJOR = SCHEMA_MAJOR
 
 
-class ContractVersionError(Exception):
+class ContractVersionError(TienKungPlanningError):
     """产物 schema_version 高于库支持（拒绝过新，而非静默错读，§4.5）。"""
 
 

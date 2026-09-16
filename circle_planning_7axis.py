@@ -348,9 +348,9 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
 
 # ---------------------------------------------------------------- tesseract 规划
 def tip_pose(robot, cfg, q):
-    """pelvis 系下 cfg['tip_frame'] 的位置与姿态。q 是规划空间向量。"""
-    cfg["set_state"](q)
-    T = robot.env.getState().link_transforms[cfg["tip_frame"]]
+    """pelvis 系下 cfg.tip_frame 的位置与姿态。q 是规划空间向量。"""
+    cfg.set_state(q)
+    T = robot.env.getState().link_transforms[cfg.tip_frame]
     return np.array(T.translation, float), np.array(T.rotation, float)
 
 
@@ -360,7 +360,7 @@ def fix_allowed_collisions(robot, cfgs):
     SRDF 里只禁用了躯干/右臂链的相邻对，其余（腿、头、相机、左手、其余手指）
     全都保留，于是任何位形都会报几十个“碰撞”，规划必然失败。这里禁用 URDF 里
     所有父子链接对，再用随机采样找出并禁用那些网格本身就互相穿插的“结构性
-    重叠”对。采样轮流经过各侧 cfg['sample_state']，手指 distal 始终按耦合写入。
+    重叠”对。采样轮流经过各侧 cfg.sample_state，手指 distal 始终按耦合写入。
     """
     tree = ET.parse(URDF)
     for j in tree.getroot().findall("joint"):
@@ -374,7 +374,7 @@ def fix_allowed_collisions(robot, cfgs):
 
     def pairs():
         for cfg in cfgs:
-            cfg["sample_state"](rng)
+            cfg.sample_state(rng)
         mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
         return [tuple(sorted(p)) for p in tess.contact_test(mgr, req)]
 
@@ -389,13 +389,13 @@ def fix_allowed_collisions(robot, cfgs):
 
 
 def plan_path(robot, cfg, poses, seed, ik_fn, return_result=False):
-    """Descartes 笛卡尔规划，返回关节轨迹 (N, len(cfg['joint_names']))。
+    """Descartes 笛卡尔规划，返回关节轨迹 (N, len(cfg.state_joint_names))。
 
     return_result=True 时返回 (Q, response)，response.results 可直接交给
     时间参数化（TOTG）做后处理。绑定细节与三个绑定坑的规避都在
     tess.descartes_plan（L1 防腐层）。
     """
-    info = robot.get_manipulator_info(cfg["group"], tcp_frame=cfg["tcp"], working_frame=FRAME)
+    info = robot.get_manipulator_info(cfg.group, tcp_frame=cfg.tcp_frame, working_frame=FRAME)
     spacing = 2.0 * math.pi * SIZE / N_POINTS
     out = tess.descartes_plan(robot.env, info, poses, ik_fn, seed, spacing)
     if out is None:
@@ -423,7 +423,7 @@ def extract_timed_trajectory(robot, results):
 def _scan_collision(robot, cfgs, qsides, mgr, req, acm):
     """设置各侧状态后做一次碰撞扫描，返回首个未被 ACM 允许的碰撞对或 None。"""
     for side, cfg in cfgs.items():
-        cfg["set_state"](qsides[side])
+        cfg.set_state(qsides[side])
     mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
     for l1, l2 in tess.contact_test(mgr, req):
         if acm.isCollisionAllowed(l1, l2):
@@ -436,7 +436,7 @@ def plan_transition(robot, cfgs, Q_from, Q_to, n=32, tries=8):
 
     Q_from/Q_to 是 {side: 关节向量}。先试直线插值（smoothstep 起停）+ 逐点
     碰撞扫描；失败再试带随机中间路标点的分段插值。返回 {side: (n+1, dof)}
-    帧序列，失败返回 None。按 cfg['joint_names'] 泛化维度，不依赖具体模式。
+    帧序列，失败返回 None。按 cfg.state_joint_names 泛化维度，不依赖具体模式。
     """
     mgr = tess.contact_manager(robot.env, COLLISION_MARGIN)
     req = tess.contact_request()
@@ -485,20 +485,20 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
     reason 给出分类（IK 失败点数等），供 A4 失败反馈显示。
     """
     label = f"[{tag}] " if tag else ""
-    points = make_path(shape, u, v, cfg["center"])
-    if "tip_offset" in cfg:
+    points = make_path(shape, u, v, cfg.center)
+    if cfg.tip_offset is not None:
         # fixed 模式：手指固定后指尖相对 tcp 的偏移 p_off 是常量。tcp 目标姿态
         # 直接用原 demo 验证可行的固定姿态（若沿用"指尖姿态∘偏移"，腕关节
         # 要额外弯出手指弯曲角，7-DOF 下经常不可达），位置按 p_tcp = p_tip - R*p_off 换算。
-        R = cfg["plan_rotation"]
-        p_off = cfg["tip_offset"]
+        R = cfg.plan_rotation
+        p_off = cfg.tip_offset
         poses = [Pose.from_matrix_position(R, list(p - R @ p_off)) for p in points]
     else:
-        poses = [Pose.from_matrix_position(cfg["rotation"], list(p)) for p in points]
+        poses = [Pose.from_matrix_position(cfg.rotation, list(p)) for p in points]
 
-    cfg["set_state"](cfg["seed_plan"])
-    Q, resp, (ik_ok, ik_total) = plan_path(robot, cfg, poses, cfg["seed_plan"],
-                                           cfg["ik_fn"], return_result=True)
+    cfg.set_state(cfg.seed_plan)
+    Q, resp, (ik_ok, ik_total) = plan_path(robot, cfg, poses, cfg.seed_plan,
+                                           cfg.ik, return_result=True)
     if Q is None or len(Q) < 2:
         reason = (f"Descartes 失败（IK {ik_ok}/{ik_total}）" if ik_total else "Descartes 失败")
         print(f"  {label}{shape} 规划失败: {reason}")
@@ -515,7 +515,7 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
     tip = np.array([tip_pose(robot, cfg, qq)[0] for qq in Q])
     n = min(len(Q), len(points))
     pos_err = np.linalg.norm(tip[:n] - points[:n], axis=1)
-    plane_dev = (tip[:n] - cfg["center"]) @ PLANE_NORMAL
+    plane_dev = (tip[:n] - cfg.center) @ PLANE_NORMAL
     margin = min(float(np.min(np.minimum(qq - cfg.limits[0], cfg.limits[1] - qq)))
                  for qq in Q)
     dur = f"  时长 {ts[-1]:.2f}s" if ts is not None else ""
@@ -523,12 +523,12 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
           f"离面 {np.max(np.abs(plane_dev))*1000:.4f} mm  关节裕度 {margin:+.3f} rad{dur}")
 
     # B2 副指验证（不做约束）：副指随主手刚体随动，指尖偏差应与主指同量级
-    if cfg.get("deltas"):
+    if cfg.deltas:
         sub_err = 0.0
-        for tf, d in cfg["deltas"]:
+        for tf, d in cfg.deltas:
             sub = []
             for qq in Q[:n]:
-                cfg["set_state"](qq)
+                cfg.set_state(qq)
                 sub.append(np.array(
                     robot.env.getState().link_transforms[tf].translation, float))
             sub_err = max(sub_err, float(
@@ -562,7 +562,7 @@ def check_dual_collision(robot, cfgs, results):
     req = tess.contact_request()
 
     (pts_r, Q_r), (pts_l, Q_l) = results["right"][:2], results["left"][:2]
-    jn_r, jn_l = cfgs["right"]["joint_names"], cfgs["left"]["joint_names"]
+    jn_r, jn_l = cfgs["right"].state_joint_names, cfgs["left"].state_joint_names
     n = min(len(Q_r), len(Q_l))
     for k in range(n):
         robot.env.setState(jn_r, Q_r[k])
@@ -969,14 +969,14 @@ class RvizSim:
 
         plan_joints = []
         for side in self.sides:
-            plan_joints += cfgs[side]["joint_names"]
+            plan_joints += cfgs[side].state_joint_names
         self.plan_joints = plan_joints
         self.other_joints = [
             j.get("name") for j in ET.parse(URDF).getroot().findall("joint")
             if j.get("type") != "fixed" and j.get("name") not in plan_joints]
         self.other_pos = {}
         for side in self.sides:
-            self.other_pos.update(cfgs[side].get("other_pos", {}))
+            self.other_pos.update(cfgs[side].other_pos)
 
         self.node = Node("tienkung_dex_shape_demo")
         self.pub_joints = self.node.create_publisher(JointState, "/joint_states", 10)
@@ -995,9 +995,9 @@ class RvizSim:
             sfx = "" if len(self.sides) == 1 or side == "right" else "_left"
             self.pub_x[side] = {
                 f: self.node.create_publisher(Path, f"/tcp_history_{f}{sfx}", 10)
-                for f in self.cfgs[side].get("extra_fingers", [])}
+                for f in self.cfgs[side].extra_fingers or []}
             self.history_x[side] = {
-                f: [] for f in self.cfgs[side].get("extra_fingers", [])}
+                f: [] for f in self.cfgs[side].extra_fingers or []}
         self.warn = {side: None for side in self.sides}
         self.points = {}
         self.shape = None
@@ -1105,21 +1105,21 @@ class RvizSim:
 
         arr = MarkerArray()
         m = marker(0, Marker.SPHERE)                 # 路径中心
-        m.pose, m.scale.x = self._pose(*cfg["center"]), 0.02
+        m.pose, m.scale.x = self._pose(*cfg.center), 0.02
         m.scale.y = m.scale.z = 0.02
         m.color = ColorRGBA(r=0.1, g=0.9, b=0.2, a=1.0)
         arr.markers.append(m)
         m = marker(1, Marker.ARROW)                  # 平面法向
-        m.pose, m.scale.x, m.scale.y, m.scale.z = self._pose(*cfg["center"]), 0.12, 0.012, 0.02
+        m.pose, m.scale.x, m.scale.y, m.scale.z = self._pose(*cfg.center), 0.12, 0.012, 0.02
         m.color = ColorRGBA(r=0.9, g=0.6, b=0.1, a=1.0)
         arr.markers.append(m)
         m = marker(2, Marker.TEXT_VIEW_FACING)       # 文字
-        m.pose, m.scale.z = self._pose(*(cfg["center"] + 0.06 * self.v)), 0.03
+        m.pose, m.scale.z = self._pose(*(cfg.center + 0.06 * self.v)), 0.03
         m.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
-        m.text = f"{self.shape}  size = {SIZE*1000:.0f} mm  [{cfg['mode']}:{side}]"
+        m.text = f"{self.shape}  size = {SIZE*1000:.0f} mm  [{cfg.mode_name}:{side}]"
         arr.markers.append(m)
         m = marker(3, Marker.TEXT_VIEW_FACING)       # 规划失败警告（无警告时空文本不可见）
-        m.pose, m.scale.z = self._pose(*(cfg["center"] - 0.08 * self.v)), 0.035
+        m.pose, m.scale.z = self._pose(*(cfg.center - 0.08 * self.v)), 0.035
         m.color = ColorRGBA(r=1.0, g=0.15, b=0.1, a=1.0)
         m.text = self.warn.get(side) or ""
         arr.markers.append(m)
@@ -1150,13 +1150,13 @@ class RvizSim:
         if kind == "shape":
             for side in self.sides:
                 cfg = self.cfgs[side]
-                cfg["set_state"](frames[side][self.i])
+                cfg.set_state(frames[side][self.i])
                 st = self.robot.env.getState().link_transforms
                 self.history[side].append(
-                    np.array(st[cfg["tip_frame"]].translation, float))
+                    np.array(st[cfg.tip_frame].translation, float))
                 pub_hist, _, _ = self.pub[side]
                 pub_hist.publish(self._path(side, self.history[side]))
-                for f, tf in cfg.get("tip_frames", {}).items():
+                for f, tf in (cfg.tip_frames or {}).items():
                     self.history_x[side][f].append(
                         np.array(st[tf].translation, float))
                     self.pub_x[side][f].publish(
@@ -1196,20 +1196,20 @@ def main(argv=None):
             cfg = build_cfg(robot, side, FINGER_NAME, MODE, seed)
         # 限位已由 build_cfg 共享装配统一填充（_finalize_limits）
         if np.any(OFFSET):                    # 手动微调预览图形/轨迹位置
-            cfg["center"] = cfg["center"] + OFFSET
+            cfg.center = cfg.center + OFFSET
             print(f"  [{side}] 路径中心平移 {np.round(OFFSET, 4)} m -> "
-                  f"{np.round(cfg['center'], 4)}")
+                  f"{np.round(cfg.center, 4)}")
         if MODE != "tcp":                     # 显示细节：其余四指跟着弯
-            cfg["other_pos"] = {**cfg.get("other_pos", {}),
+            cfg.other_pos = {**cfg.other_pos,
                                 **display_other_pos(side, FINGER_LIST)}
         cfgs[side] = cfg
-        print(f"  [{side}] 组 {cfg['group']}  TCP {cfg['tip_frame']}  "
-              f"关节 {len(cfg['joint_names'])}")
+        print(f"  [{side}] 组 {cfg.group}  TCP {cfg.tip_frame}  "
+              f"关节 {len(cfg.state_joint_names)}")
 
     # 把显示/固定的手部姿态写入环境：之后的 ACM 采样与规划碰撞检查都能看到
     # 真实的手部状态（其余手指的值此后不再被任何 setState 改动，保持不变）
     for side in SIDES:
-        op = cfgs[side].get("other_pos", {})
+        op = cfgs[side].other_pos
         if op:
             robot.env.setState(list(op), np.array([op[n] for n in op], float))
 
@@ -1222,17 +1222,17 @@ def main(argv=None):
     # A3 可达性预检：四个形状采样点（±u/±v）先做单点 IK，偏移过大立即拒绝启动，
     # 而不是等 Descartes 规划中途失败
     for side, cfg in cfgs.items():
-        if "tip_offset" in cfg:              # fixed 模式：实际规划的是 tcp 目标位姿
-            R, p_off = cfg["plan_rotation"], cfg["tip_offset"]
+        if cfg.tip_offset is not None:              # fixed 模式：实际规划的是 tcp 目标位姿
+            R, p_off = cfg.plan_rotation, cfg.tip_offset
             pose = lambda p: Pose.from_matrix_position(R, list(p - R @ p_off))
         else:
-            R = cfg["rotation"]
+            R = cfg.rotation
             pose = lambda p: Pose.from_matrix_position(R, list(p))
         bad = [d for d in (u, v, -u, -v)
-               if cfg["ik_fn"](pose(cfg["center"] + SIZE * d), cfg["seed_plan"]) is None]
+               if cfg.ik(pose(cfg.center + SIZE * d), cfg.seed_plan) is None]
         if bad:
             raise SystemExit(
-                f"[{side}] 可达性预检失败：中心 {np.round(cfg['center'], 3)} 沿 "
+                f"[{side}] 可达性预检失败：中心 {np.round(cfg.center, 3)} 沿 "
                 f"{np.round(bad[0], 2)} 方向的形状采样点不可达，"
                 f"请用 --offset 平移中心或减小图形尺寸")
     print("  可达性预检通过（形状 ±u/±v 四点）")
