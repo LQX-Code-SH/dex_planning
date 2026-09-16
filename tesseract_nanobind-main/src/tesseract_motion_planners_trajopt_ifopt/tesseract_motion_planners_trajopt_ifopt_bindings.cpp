@@ -1,0 +1,207 @@
+/**
+ * @file tesseract_motion_planners_trajopt_ifopt_bindings.cpp
+ * @brief nanobind bindings for tesseract_motion_planners TrajOpt IFOPT
+ *
+ * NOTE: 0.33 API changes:
+ * - TrajOptIfoptPlanProfile -> TrajOptIfoptMoveProfile
+ * - TrajOptIfoptDefaultPlanProfile -> TrajOptIfoptDefaultMoveProfile
+ * - Profile/ProfileDictionary moved to tesseract_common
+ */
+
+#include "tesseract_nb.h"
+
+// tesseract_motion_planners core (for PlannerRequest/Response)
+#include <tesseract/motion_planners/types.h>
+
+// tesseract_common (Profile and ProfileDictionary moved here in 0.33)
+#include <tesseract/common/profile.h>
+#include <tesseract/common/profile_dictionary.h>
+
+// tesseract_motion_planners TrajOpt IFOPT
+#include <tesseract/motion_planners/trajopt_ifopt/trajopt_ifopt_motion_planner.h>
+#include <tesseract/motion_planners/trajopt_ifopt/profile/trajopt_ifopt_profile.h>
+#include <tesseract/motion_planners/trajopt_ifopt/profile/trajopt_ifopt_default_move_profile.h>
+#include <tesseract/motion_planners/trajopt_ifopt/profile/trajopt_ifopt_default_composite_profile.h>
+#include <tesseract/motion_planners/trajopt_ifopt/profile/trajopt_ifopt_osqp_solver_profile.h>
+#include <tesseract/motion_planners/trajopt_ifopt/trajopt_ifopt_waypoint_config.h>
+
+// trajopt_common for collision config
+#include <trajopt_common/collision_types.h>
+
+// trajopt_sqp for SQPParameters (TrajOptIfoptSolverProfile::opt_params)
+#include <trajopt_sqp/types.h>
+
+// OsqpEigen settings (forwarded setters on TrajOptIfoptOSQPSolverProfile)
+#include <OsqpEigen/Settings.hpp>
+
+namespace tp = tesseract::motion_planners;
+namespace tc = tesseract::common;
+
+NB_MODULE(_tesseract_motion_planners_trajopt_ifopt, m) {
+    m.doc() = "tesseract_motion_planners_trajopt_ifopt Python bindings";
+
+    // Import Profile type from tesseract_command_language for cross-module inheritance
+    auto cl_module = nb::module_::import_("tesseract_robotics.tesseract_command_language._tesseract_command_language");
+
+    // Import MotionPlanner base type for clone() return type
+    nb::module_::import_("tesseract_robotics.tesseract_motion_planners._tesseract_motion_planners");
+
+    // ========== trajopt_common::TrajOptCollisionConfig ==========
+    // Owned by the trajopt_ifopt module; import so the composite profile's
+    // collision_cost_config / collision_constraint_config members resolve
+    // (same pattern as tesseract_motion_planners_trajopt).
+    nb::module_::import_("tesseract_robotics.trajopt_ifopt._trajopt_ifopt");
+
+    // ========== trajopt_sqp::SQPParameters ==========
+    // Owned by the trajopt_sqp module; import so TrajOptIfoptSolverProfile's
+    // opt_params member resolves.
+    nb::module_::import_("tesseract_robotics.trajopt_sqp._trajopt_sqp");
+
+    // ========== TrajOptIfoptCartesianWaypointConfig ==========
+    nb::class_<tp::TrajOptIfoptCartesianWaypointConfig>(m, "TrajOptIfoptCartesianWaypointConfig")
+        .def(nb::init<>())
+        .def_rw("enabled", &tp::TrajOptIfoptCartesianWaypointConfig::enabled)
+        .def_rw("use_tolerance_override", &tp::TrajOptIfoptCartesianWaypointConfig::use_tolerance_override)
+        .def_rw("lower_tolerance", &tp::TrajOptIfoptCartesianWaypointConfig::lower_tolerance)
+        .def_rw("upper_tolerance", &tp::TrajOptIfoptCartesianWaypointConfig::upper_tolerance)
+        .def_rw("coeff", &tp::TrajOptIfoptCartesianWaypointConfig::coeff);
+
+    // ========== TrajOptIfoptJointWaypointConfig ==========
+    nb::class_<tp::TrajOptIfoptJointWaypointConfig>(m, "TrajOptIfoptJointWaypointConfig")
+        .def(nb::init<>())
+        .def_rw("enabled", &tp::TrajOptIfoptJointWaypointConfig::enabled)
+        .def_rw("use_tolerance_override", &tp::TrajOptIfoptJointWaypointConfig::use_tolerance_override)
+        .def_rw("lower_tolerance", &tp::TrajOptIfoptJointWaypointConfig::lower_tolerance)
+        .def_rw("upper_tolerance", &tp::TrajOptIfoptJointWaypointConfig::upper_tolerance)
+        .def_rw("coeff", &tp::TrajOptIfoptJointWaypointConfig::coeff);
+
+    // ========== TrajOptIfoptMoveProfile (base, was TrajOptIfoptPlanProfile) ==========
+    nb::class_<tp::TrajOptIfoptMoveProfile, tc::Profile>(m, "TrajOptIfoptMoveProfile")
+        .def("getKey", &tp::TrajOptIfoptMoveProfile::getKey);
+
+    // SWIG-compatible alias
+    m.attr("TrajOptIfoptPlanProfile") = m.attr("TrajOptIfoptMoveProfile");
+
+    // ========== TrajOptIfoptCompositeProfile (base) ==========
+    nb::class_<tp::TrajOptIfoptCompositeProfile, tc::Profile>(m, "TrajOptIfoptCompositeProfile")
+        .def("getKey", &tp::TrajOptIfoptCompositeProfile::getKey);
+
+    // ========== TrajOptIfoptSolverProfile (base) ==========
+    // opt_params is the SQP loop itself (max_iterations, max_qp_solver_failures,
+    // trust-region ratios, merit-coeff inflation) -- create() assigns it straight
+    // onto the TrustRegionSQPSolver, so it is the only route to those knobs. The
+    // sco back-end exposes them via TrajOptOSQPSolverProfile; unbound here, an
+    // IFOPT migration silently loses them and runs on C++ defaults (max_iterations
+    // 50, max_qp_solver_failures 3).
+    nb::class_<tp::TrajOptIfoptSolverProfile, tc::Profile>(m, "TrajOptIfoptSolverProfile")
+        .def_rw("opt_params", &tp::TrajOptIfoptSolverProfile::opt_params)
+        .def("getKey", &tp::TrajOptIfoptSolverProfile::getKey);
+
+    // ========== TrajOptIfoptDefaultMoveProfile (was TrajOptIfoptDefaultPlanProfile) ==========
+    nb::class_<tp::TrajOptIfoptDefaultMoveProfile, tp::TrajOptIfoptMoveProfile>(m, "TrajOptIfoptDefaultMoveProfile")
+        .def(nb::init<>())
+        .def_rw("cartesian_cost_config", &tp::TrajOptIfoptDefaultMoveProfile::cartesian_cost_config)
+        .def_rw("cartesian_constraint_config", &tp::TrajOptIfoptDefaultMoveProfile::cartesian_constraint_config)
+        .def_rw("joint_cost_config", &tp::TrajOptIfoptDefaultMoveProfile::joint_cost_config)
+        .def_rw("joint_constraint_config", &tp::TrajOptIfoptDefaultMoveProfile::joint_constraint_config);
+
+    // SWIG-compatible alias
+    m.attr("TrajOptIfoptDefaultPlanProfile") = m.attr("TrajOptIfoptDefaultMoveProfile");
+
+    // ========== TrajOptIfoptDefaultCompositeProfile ==========
+    // Note: longest_valid_segment_fraction/length removed in 0.33, collision config via TrajOptCollisionConfig.
+    // The two collision configs carry max_num_cnt, which ONLY trajopt_ifopt honours
+    // (trajopt_common/collision_types.h: "only used by trajopt_ifopt because the
+    // constraints size must be fixed") -- it caps the collision constraint at that
+    // many rows per timestep, one per worst link pair, so QP size stops tracking
+    // contact count. Unbound they are unreachable and the planner silently runs on
+    // C++ defaults: no margins, no buffers, no modify_collision_objects scoping.
+    nb::class_<tp::TrajOptIfoptDefaultCompositeProfile, tp::TrajOptIfoptCompositeProfile>(m, "TrajOptIfoptDefaultCompositeProfile")
+        .def(nb::init<>())
+        .def_rw("collision_cost_config", &tp::TrajOptIfoptDefaultCompositeProfile::collision_cost_config)
+        .def_rw("collision_constraint_config", &tp::TrajOptIfoptDefaultCompositeProfile::collision_constraint_config)
+        .def_rw("smooth_velocities", &tp::TrajOptIfoptDefaultCompositeProfile::smooth_velocities)
+        .def_rw("velocity_coeff", &tp::TrajOptIfoptDefaultCompositeProfile::velocity_coeff)
+        .def_rw("smooth_accelerations", &tp::TrajOptIfoptDefaultCompositeProfile::smooth_accelerations)
+        .def_rw("acceleration_coeff", &tp::TrajOptIfoptDefaultCompositeProfile::acceleration_coeff)
+        .def_rw("smooth_jerks", &tp::TrajOptIfoptDefaultCompositeProfile::smooth_jerks)
+        .def_rw("jerk_coeff", &tp::TrajOptIfoptDefaultCompositeProfile::jerk_coeff);
+
+    // ========== TrajOptIfoptOSQPSolverProfile ==========
+    // qp_settings is a unique_ptr<OsqpEigen::Settings>; expose setters that forward into it
+    // (same pattern as trajopt_sqp.OSQPEigenSolver). Defaults via setDefaultOSQPSettings:
+    // polish=true, warmStart=true, adaptiveRho=true, maxIter=8192, absTol=1e-4, relTol=1e-6
+    nb::class_<tp::TrajOptIfoptOSQPSolverProfile, tp::TrajOptIfoptSolverProfile>(m, "TrajOptIfoptOSQPSolverProfile")
+        .def(nb::init<>())
+        .def("setPolish", [](tp::TrajOptIfoptOSQPSolverProfile& self, bool v) {
+            self.qp_settings->setPolish(v); }, "polish"_a,
+            "Enable solution polishing (default: true)")
+        .def("setWarmStart", [](tp::TrajOptIfoptOSQPSolverProfile& self, bool v) {
+            self.qp_settings->setWarmStart(v); }, "warm_start"_a,
+            "Enable warm-starting (default: true)")
+        .def("setAdaptiveRho", [](tp::TrajOptIfoptOSQPSolverProfile& self, bool v) {
+            self.qp_settings->setAdaptiveRho(v); }, "adaptive_rho"_a,
+            "Enable adaptive step size (default: true)")
+        .def("setAdaptiveRhoInterval", [](tp::TrajOptIfoptOSQPSolverProfile& self, int v) {
+            self.qp_settings->setAdaptiveRhoInterval(v); }, "interval"_a,
+            "Adapt rho every N iterations. OSQP's default 0 adapts on wall-clock timing,\n"
+            "making solutions nondeterministic run-to-run; set a fixed interval (e.g. 25)\n"
+            "for reproducible optimization.")
+        .def("setMaxIteration", [](tp::TrajOptIfoptOSQPSolverProfile& self, int v) {
+            self.qp_settings->setMaxIteration(v); }, "max_iter"_a,
+            "Max OSQP iterations per QP solve (default: 8192)")
+        .def("setAbsoluteTolerance", [](tp::TrajOptIfoptOSQPSolverProfile& self, double v) {
+            self.qp_settings->setAbsoluteTolerance(v); }, "abs_tol"_a,
+            "Absolute convergence tolerance (default: 1e-4)")
+        .def("setRelativeTolerance", [](tp::TrajOptIfoptOSQPSolverProfile& self, double v) {
+            self.qp_settings->setRelativeTolerance(v); }, "rel_tol"_a,
+            "Relative convergence tolerance (default: 1e-6)")
+        .def("setVerbosity", [](tp::TrajOptIfoptOSQPSolverProfile& self, bool v) {
+            self.qp_settings->setVerbosity(v); }, "verbose"_a,
+            "Enable OSQP console output (default: false)");
+
+    // Helper to add TrajOptIfopt move profile to ProfileDictionary directly
+    m.def("ProfileDictionary_addTrajOptIfoptMoveProfile", [](tc::ProfileDictionary& dict,
+                                                              const std::string& ns,
+                                                              const std::string& profile_name,
+                                                              std::shared_ptr<tp::TrajOptIfoptMoveProfile> profile) {
+        dict.addProfile(ns, profile_name, profile);
+    }, "dict"_a, "ns"_a, "profile_name"_a, "profile"_a,
+    "Add TrajOptIfopt move profile to ProfileDictionary");
+
+    // Legacy alias
+    m.def("ProfileDictionary_addTrajOptIfoptPlanProfile", [](tc::ProfileDictionary& dict,
+                                                              const std::string& ns,
+                                                              const std::string& profile_name,
+                                                              std::shared_ptr<tp::TrajOptIfoptMoveProfile> profile) {
+        dict.addProfile(ns, profile_name, profile);
+    }, "dict"_a, "ns"_a, "profile_name"_a, "profile"_a,
+    "Add TrajOptIfopt plan profile to ProfileDictionary (legacy alias)");
+
+    // Helper to add TrajOptIfopt composite profile to ProfileDictionary directly
+    m.def("ProfileDictionary_addTrajOptIfoptCompositeProfile", [](tc::ProfileDictionary& dict,
+                                                                   const std::string& ns,
+                                                                   const std::string& profile_name,
+                                                                   std::shared_ptr<tp::TrajOptIfoptCompositeProfile> profile) {
+        dict.addProfile(ns, profile_name, profile);
+    }, "dict"_a, "ns"_a, "profile_name"_a, "profile"_a,
+    "Add TrajOptIfopt composite profile to ProfileDictionary");
+
+    // Helper to add TrajOptIfopt solver profile to ProfileDictionary directly
+    m.def("ProfileDictionary_addTrajOptIfoptSolverProfile", [](tc::ProfileDictionary& dict,
+                                                                const std::string& ns,
+                                                                const std::string& profile_name,
+                                                                std::shared_ptr<tp::TrajOptIfoptSolverProfile> profile) {
+        dict.addProfile(ns, profile_name, profile);
+    }, "dict"_a, "ns"_a, "profile_name"_a, "profile"_a,
+    "Add TrajOptIfopt solver profile to ProfileDictionary");
+
+    // ========== TrajOptIfoptMotionPlanner ==========
+    nb::class_<tp::TrajOptIfoptMotionPlanner>(m, "TrajOptIfoptMotionPlanner")
+        .def(nb::init<std::string>(), "name"_a)
+        .def("getName", &tp::TrajOptIfoptMotionPlanner::getName)
+        .def("solve", &tp::TrajOptIfoptMotionPlanner::solve, "request"_a, nb::call_guard<nb::gil_scoped_release>())
+        .def("terminate", &tp::TrajOptIfoptMotionPlanner::terminate)
+        .def("clear", &tp::TrajOptIfoptMotionPlanner::clear)
+        .def("clone", [](const tp::TrajOptIfoptMotionPlanner& self) { return self.clone(); });
+}

@@ -1,0 +1,329 @@
+name: Build & Test (Windows)
+
+# Canonical Windows wheel pipeline. Sources C++ deps from conda-forge via pixi.
+# Mirrors the shape of wheels-linux.yml / wheels-macos.yml.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/workflows/wheels-linux.yml'
+      - '.github/workflows/wheels-macos.yml'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/workflows/wheels-linux.yml'
+      - '.github/workflows/wheels-macos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      # Tag builds must yield EXACTLY the tag version. A dirty CI tree otherwise makes
+      # setuptools_scm guess-next-dev (e.g. 0.35.0.4.dev0) which — local segment stripped —
+      # would publish as a stray dev release (see 0.35.0.3). Pin the version on tag builds.
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TESSERACT_ROBOTICS_NANOBIND: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      PIXI_ENV: py${{ matrix.python == '3.9' && '39' || matrix.python == '3.10' && '310' || matrix.python == '3.11' && '311' || '312' }}
+      # 3.9: C++ stack from the py312 env (CMakeLists.txt + build steps honor this;
+      # empty for other versions → falls back to the active env).
+      TESSERACT_CPP_PREFIX: ${{ matrix.python == '3.9' && format('{0}\tesseract_nanobind\.pixi\envs\py312', github.workspace) || '' }}
+    strategy:
+      fail-fast: false  # don't kill siblings on transient network failures
+      matrix:
+        # 3.9 is the Rhino 8 build (Rhino embeds CPython 3.9): a minimal py39 env
+        # provides the interpreter while the C++ stack comes from the py312 env via
+        # TESSERACT_CPP_PREFIX — the tesseract conda packages' pcl→vtk closure has
+        # no cp39 builds, so the two can't co-install in one env.
+        python: ['3.9', '3.10', '3.11', '3.12']
+    defaults:
+      run:
+        shell: bash -el {0}  # Git Bash is pre-installed on windows-2022
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: tesseract_nanobind
+        fetch-depth: 0  # setuptools-scm tag history
+
+    - name: enable long paths
+      shell: pwsh
+      run: git config --global core.longpaths true
+
+    # pixi installs the tesseract C++ libs from the tesseract-robotics conda channel
+    # (no more vcstool import / colcon build). On Windows the conda binaries live
+    # under $CONDA_PREFIX/Library.
+    - name: setup pixi
+      uses: prefix-dev/setup-pixi@v0.8.0
+      with:
+        pixi-version: v0.70.1
+        manifest-path: tesseract_nanobind/pyproject.toml
+        cache: true
+        # Fail loudly if pixi.lock drifts from pyproject.toml instead of silently
+        # re-solving: a stale lock froze the mid-eigen-5-migration snapshot that
+        # shipped ABI-corrupted wheels (orocos-kdl built against Eigen 3.4 mixed
+        # with Eigen-5 tesseract libs → heap corruption in every KDL code path).
+        locked: true
+        # 3.9 needs BOTH envs: py39 supplies the interpreter, py312 the C++ stack.
+        environments: ${{ matrix.python == '3.9' && 'py39 py312' || env.PIXI_ENV }}
+        activate-environment: ${{ env.PIXI_ENV }}
+
+    - name: activate MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        toolset: "14.4"  # v143
+
+    - name: pip build tools
+      run: python -m pip install --upgrade pip delvewheel
+
+    - name: install zip CLI
+      shell: pwsh
+      run: |
+        choco install zip -y --no-progress
+        zip --version
+
+    - name: restore nanobind wheel build cache
+      id: nanobind-build-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: tesseract_nanobind/build
+        key: nanobind-wheel-build-win-pixi-py${{ matrix.python }}-${{ hashFiles('tesseract_nanobind/CMakeLists.txt', 'tesseract_nanobind/pyproject.toml', 'tesseract_nanobind/pixi.lock', 'tesseract_nanobind/src/**/*.cpp', 'tesseract_nanobind/src/**/*.h', 'tesseract_nanobind/src/**/*.hpp') }}
+
+    - name: build nanobind wheel
+      working-directory: tesseract_nanobind
+      env:
+        # -bigobj — tesseract_common cereal serialization exceeds the COFF section
+        # limit. Dash form, NOT /bigobj: with no other token in front, the MSYS
+        # bash path-conversion heuristic treats a leading "/bigobj" as a POSIX
+        # path and rewrites it to <prefix>/Library/bigobj, which CL then takes
+        # for a source file (error C1083). On main the value was shielded by the
+        # leading -DEIGEN_* defines; those are gone (the conda tesseract libs are
+        # built against conda-forge Eigen with default alignment, so the bindings
+        # must match that ABI rather than override it), leaving the bare slash
+        # exposed. cl.exe accepts - and / interchangeably.
+        CXXFLAGS: "-bigobj"
+      run: |
+        # C++ stack prefix: the active env, or the py312 env for the cp39 build
+        # (TESSERACT_CPP_PREFIX, set at job level; CMakeLists.txt reads it too).
+        CPP_PREFIX="${TESSERACT_CPP_PREFIX:-$CONDA_PREFIX}"
+        CONDA_LIB="$CPP_PREFIX/Library"
+        export CMAKE_PREFIX_PATH="$CONDA_LIB"
+        export PATH="$CONDA_LIB/bin:$PATH"
+
+        # Some exported tesseract CMake configs link deps by bare name (yaml-cpp,
+        # etc.) rather than via namespaced IMPORTED targets. CMake passes the bare
+        # name to MSBuild which expects <name>.lib on the linker search path. The
+        # LIB env var is THE mechanism link.exe uses for that path. We set it in
+        # Windows form (cygpath -w) because Git Bash's POSIX :-separated default is
+        # ignored by native link.exe.
+        WIN_CONDA_LIB=$(cygpath -w "$CONDA_LIB/lib")
+        export LIB="${WIN_CONDA_LIB};${LIB:-}"
+        echo "LIB=$LIB"
+        export CMAKE_ARGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        pip wheel . -w dist/ --no-build-isolation
+
+    - name: save nanobind wheel build cache
+      if: steps.nanobind-build-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: tesseract_nanobind/build
+        key: nanobind-wheel-build-win-pixi-py${{ matrix.python }}-${{ hashFiles('tesseract_nanobind/CMakeLists.txt', 'tesseract_nanobind/pyproject.toml', 'tesseract_nanobind/pixi.lock', 'tesseract_nanobind/src/**/*.cpp', 'tesseract_nanobind/src/**/*.h', 'tesseract_nanobind/src/**/*.hpp') }}
+
+    - name: bundle plugins then delvewheel repair
+      working-directory: tesseract_nanobind
+      run: |
+        set -e
+        # Plugins + deps come from the C++ stack env (py312 for the cp39 build).
+        CPP_PREFIX="${TESSERACT_CPP_PREFIX:-$CONDA_PREFIX}"
+        WHEEL_FILE=$(ls dist/tesseract*.whl)
+        WHEEL_DIR=$(mktemp -d)
+        unzip -q "$WHEEL_FILE" -d "$WHEEL_DIR"
+        PKG_DIR="$WHEEL_DIR/tesseract_robotics"
+
+        echo "=== Bundling plugin factory DLLs into package dir ==="
+        for plugin in \
+          tesseract_collision_bullet_factories \
+          tesseract_collision_fcl_factories \
+          tesseract_kinematics_factories \
+          tesseract_kinematics_kdl_factories \
+          tesseract_kinematics_opw_factory \
+          tesseract_kinematics_ur_factory \
+          tesseract_task_composer_factories \
+          tesseract_task_composer_planning_factories \
+          tesseract_task_composer_taskflow_factories; do
+          src="$CPP_PREFIX/Library/bin/${plugin}.dll"
+          if [ -f "$src" ]; then
+            cp "$src" "$PKG_DIR/${plugin}.dll"
+            cp "$src" "$PKG_DIR/lib${plugin}.dll"
+            echo "  Added: ${plugin}.dll and lib${plugin}.dll"
+            if [ "$plugin" = "tesseract_kinematics_opw_factory" ]; then
+              cp "$src" "$PKG_DIR/tesseract_kinematics_opw_factories.dll"
+              cp "$src" "$PKG_DIR/libtesseract_kinematics_opw_factories.dll"
+              echo "  Added OPW plural aliases for bundled support YAMLs"
+            fi
+          else
+            echo "  MISSING: ${plugin}.dll"
+          fi
+        done
+
+        echo "=== Patching task_composer_config YAMLs ==="
+        for yaml_file in "$PKG_DIR/data/task_composer_config"/*.yaml; do
+          if [[ -f "$yaml_file" ]] && grep -q '/usr/local/lib' "$yaml_file"; then
+            sed -i 's|/usr/local/lib|"@PLUGIN_PATH@"|g' "$yaml_file"
+            echo "  Patched: $(basename "$yaml_file")"
+          fi
+        done
+
+        echo "=== Stripping search_paths from tesseract_support YAMLs ==="
+        find "$PKG_DIR/data/tesseract/support" -name "*.yaml" -type f 2>/dev/null | while read yaml_file; do
+          if grep -q 'search_paths:' "$yaml_file"; then
+            sed -i '/search_paths:/d; /^[[:space:]]*- \/.*$/d' "$yaml_file"
+            echo "  Stripped: $(basename "$yaml_file")"
+          fi
+        done
+
+        rm "$WHEEL_FILE"
+        (cd "$WHEEL_DIR" && zip -rq "$GITHUB_WORKSPACE/tesseract_nanobind/$WHEEL_FILE" .)
+        rm -rf "$WHEEL_DIR"
+
+        echo "=== delvewheel repair ==="
+        mkdir -p wheelhouse
+        CONDA_BIN="${TESSERACT_CPP_PREFIX:-$CONDA_PREFIX}/Library/bin"
+        # --analyze-existing: also scan the plugin factory DLLs we copied into
+        # the package dir (delvewheel only walks .pyd imports by default, so
+        # without this the plugins ship with unhashed dep names that Windows
+        # can't resolve at runtime). Deps now come entirely from the conda env.
+        delvewheel repair -v --analyze-existing --add-path "$CONDA_BIN" -w wheelhouse "$WHEEL_FILE"
+
+        echo "=== Wheel contents ==="
+        ls -la wheelhouse/
+
+    # ABI canary: install the repaired wheel into the pixi env and run the
+    # kinematics tests against it — same guard as linux/macos. Windows is
+    # rhino's primary platform; KDL jacobians crossing the binding↔lib Eigen
+    # boundary must be exercised here, not just on the other platforms.
+    # (Not on 3.9: the minimal py39 env has no pytest/numpy — its wheel is
+    # exercised by the blocking 3.9 test-wheel job instead.)
+    - name: wheel ABI canary (kinematics)
+      if: matrix.python != '3.9'
+      working-directory: tesseract_nanobind
+      run: |
+        pixi run pip install --force-reinstall --no-deps wheelhouse/tesseract*.whl
+        pixi run python -m pytest tests/tesseract_kinematics -x -q
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ matrix.python }}-windows-x64-pixi
+        path: tesseract_nanobind/wheelhouse/tesseract*.whl
+
+    - if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs-windows-x64-pixi-py${{ matrix.python }}
+        path: '**/*.log'
+        retention-days: 2
+
+  test-wheel:
+    needs: build
+    runs-on: windows-2022
+    continue-on-error: ${{ matrix.continue_on_error }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13/3.14 install the cp312-abi3 wheel (STABLE_ABI) to verify the
+        # published support matrix on Windows, not just Linux. wheel != python.
+        # 3.9 is blocking: Rhino 8 embeds CPython 3.9 — that wheel must work.
+        include:
+          - { python: '3.9',  wheel: '3.9',  continue_on_error: false }
+          - { python: '3.12', wheel: '3.12', continue_on_error: false }
+          - { python: '3.13', wheel: '3.12', continue_on_error: false }
+          - { python: '3.14', wheel: '3.12', continue_on_error: true }
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: tesseract_nanobind
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+        architecture: x64
+        allow-prereleases: true
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-${{ matrix.wheel }}-windows-x64-pixi
+        path: wheelhouse
+
+    - name: install wheel in clean venv
+      run: |
+        python -m venv test_env
+        source test_env/Scripts/activate
+        python -m pip install --upgrade pip
+        pip install wheelhouse/tesseract*.whl
+        pip install pytest pytest-xdist scipy
+
+    - name: smoke test
+      run: |
+        source test_env/Scripts/activate
+        python -c "import tesseract_robotics; print('Version:', tesseract_robotics.__version__)"
+        python -c "from tesseract_robotics import tesseract_common, tesseract_geometry, tesseract_scene_graph"
+        python -c "from tesseract_robotics import trajopt_ifopt; print('trajopt_ifopt OK')"
+
+    - name: run tests
+      # Full suite, benchmarks excepted — same scope as linux/macos test-wheel.
+      # kinematics/examples/time_parameterization were skipped here since the
+      # colcon era ("plugin loading requires the full development environment");
+      # that rationale predates delvewheel --analyze-existing, the PATH-prepend
+      # fix, and the uniform conda plugin DLLs. Windows is rhino's primary
+      # platform: this is core product coverage, not optional.
+      run: |
+        source test_env/Scripts/activate
+        cd tesseract_nanobind
+        pytest tests -n auto \
+          --ignore=tests/benchmarks \
+          -v --tb=short
+
+  publish:
+    needs: [build, test-wheel]
+    if: startsWith(github.ref, 'refs/tags/')
+    # pypa/gh-action-pypi-publish is hard-Linux-only. The artifacts are already
+    # built for Windows x64 — we just download and twine-upload them from Linux.
+    runs-on: ubuntu-latest
+    environment: windows
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: python-*-windows-x64-pixi
+        merge-multiple: true
+        path: dist/
+    - name: List wheels
+      run: ls -la dist/
+    - name: assert wheel version == tag (block stray dev/mismatched release)
+      run: |
+        for whl in dist/*.whl; do
+          v=$(basename "$whl" | cut -d- -f2)
+          [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::$whl is version $v, expected tag $GITHUB_REF_NAME — refusing to publish"; exit 1; }
+        done
+        echo "✓ all wheels are version $GITHUB_REF_NAME"
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        skip-existing: true  # idempotent re-runs: skip already-uploaded wheels instead of 400-aborting the batch

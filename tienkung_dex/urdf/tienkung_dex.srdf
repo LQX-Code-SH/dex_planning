@@ -1,0 +1,127 @@
+<?xml version="1.0" ?>
+<robot name="tiangong2dex_urdf">
+    <!-- 右手臂运动学组 - 使用 chain 定义 -->
+    <group name="right_arm">
+        <chain base_link="waist_pitch_link" tip_link="right_tcp_link" />
+    </group>
+
+    <!-- 右臂+食指全链组（食指 distal 为 mimic 被动关节，主动自由度 = 7 臂 + 1 指） -->
+    <group name="right_arm_index">
+        <chain base_link="waist_pitch_link" tip_link="right_index_tip_link" />
+    </group>
+
+    <!-- 其余手指全链组（thumb 链上多一个独立的 metacarpal 旋转关节） -->
+    <group name="right_arm_middle">
+        <chain base_link="waist_pitch_link" tip_link="right_middle_tip_link" />
+    </group>
+    <group name="right_arm_ring">
+        <chain base_link="waist_pitch_link" tip_link="right_ring_tip_link" />
+    </group>
+    <group name="right_arm_pinky">
+        <chain base_link="waist_pitch_link" tip_link="right_pinky_tip_link" />
+    </group>
+    <group name="right_arm_thumb">
+        <chain base_link="waist_pitch_link" tip_link="right_thumb_tip_link" />
+    </group>
+    <group name="left_arm_index">
+        <chain base_link="waist_pitch_link" tip_link="left_index_tip_link" />
+    </group>
+    <group name="left_arm_middle">
+        <chain base_link="waist_pitch_link" tip_link="left_middle_tip_link" />
+    </group>
+    <group name="left_arm_ring">
+        <chain base_link="waist_pitch_link" tip_link="left_ring_tip_link" />
+    </group>
+    <group name="left_arm_pinky">
+        <chain base_link="waist_pitch_link" tip_link="left_pinky_tip_link" />
+    </group>
+    <group name="left_arm_thumb">
+        <chain base_link="waist_pitch_link" tip_link="left_thumb_tip_link" />
+    </group>
+
+    <!-- 含腰 3 关节的全链组（--waist free 时使用；腰是左右共享的物理关节，
+         --arm both 时腰只归属右臂变量空间，左臂在右臂解出的腰值上冻结规划） -->
+    <group name="right_arm_waist_index">
+        <chain base_link="pelvis" tip_link="right_index_tip_link" />
+    </group>
+    <group name="right_arm_waist_middle">
+        <chain base_link="pelvis" tip_link="right_middle_tip_link" />
+    </group>
+    <group name="right_arm_waist_ring">
+        <chain base_link="pelvis" tip_link="right_ring_tip_link" />
+    </group>
+    <group name="right_arm_waist_pinky">
+        <chain base_link="pelvis" tip_link="right_pinky_tip_link" />
+    </group>
+    <group name="right_arm_waist_thumb">
+        <chain base_link="pelvis" tip_link="right_thumb_tip_link" />
+    </group>
+    <group name="left_arm_waist_index">
+        <chain base_link="pelvis" tip_link="left_index_tip_link" />
+    </group>
+    <group name="left_arm_waist_middle">
+        <chain base_link="pelvis" tip_link="left_middle_tip_link" />
+    </group>
+    <group name="left_arm_waist_ring">
+        <chain base_link="pelvis" tip_link="left_ring_tip_link" />
+    </group>
+    <group name="left_arm_waist_pinky">
+        <chain base_link="pelvis" tip_link="left_pinky_tip_link" />
+    </group>
+    <group name="left_arm_waist_thumb">
+        <chain base_link="pelvis" tip_link="left_thumb_tip_link" />
+    </group>
+
+    <!-- 手指 distal 关节由连杆耦合驱动（URDF mimic，系数同 hand_bridge._FOLLOWER：
+         四指 1.155、拇指 1.0），对规划器声明为被动关节；thumb_rot 无耦合、是主动关节 -->
+    <passive_joint name="right_index_distal_joint" />
+    <passive_joint name="right_middle_distal_joint" />
+    <passive_joint name="right_ring_distal_joint" />
+    <passive_joint name="right_pinky_distal_joint" />
+    <passive_joint name="right_thumb_distal_joint" />
+    <passive_joint name="left_index_distal_joint" />
+    <passive_joint name="left_middle_distal_joint" />
+    <passive_joint name="left_ring_distal_joint" />
+    <passive_joint name="left_pinky_distal_joint" />
+    <passive_joint name="left_thumb_distal_joint" />
+
+    <!-- 左手臂运动学组 -->
+    <group name="left_arm">
+        <chain base_link="waist_pitch_link" tip_link="left_tcp_link" />
+    </group>
+
+    <!-- Groups kinematic plugins -->
+    <kinematics_plugin_config filename="file:///home/qingxiangliu/work/dex_planning/tienkung_dex/urdf/tienkung_dex_plugins.yaml" />
+
+    <!-- Contact Managers plugins -->
+    <contact_managers_plugin_config filename="file:///home/qingxiangliu/work/dex_planning/tienkung_dex/urdf/contact_manager_plugins.yaml" />
+
+    <!-- 运动学求解器配置（注：group_opw 非 tesseract 标准标签，仅作说明保留） -->
+    <group_opw name="right_arm">
+        <group>right_arm</group>
+        <a1>0.0</a1>
+        <a2>0.0</a2>
+        <b>0.0</b>
+        <c1>0.18664</c1>
+        <c2>0.1004</c2>
+        <c3>0.1596</c3>
+        <c4>0.107</c4>
+        <offsets>0 0 0 0 0 0</offsets>
+        <sign_corrections>1 1 1 1 1 1</sign_corrections>
+    </group_opw>
+
+    <!-- 禁用某些不需要的碰撞检测 -->
+    <disable_collisions link1="pelvis" link2="waist_yaw_link" reason="Adjacent" />
+    <disable_collisions link1="waist_yaw_link" link2="waist_roll_link" reason="Adjacent" />
+    <disable_collisions link1="waist_roll_link" link2="waist_pitch_link" reason="Adjacent" />
+
+    <!-- 右手臂相邻链接碰撞禁用 -->
+    <disable_collisions link1="waist_pitch_link" link2="shoulder_pitch_r_link" reason="Adjacent" />
+    <disable_collisions link1="shoulder_pitch_r_link" link2="shoulder_roll_r_link" reason="Adjacent" />
+    <disable_collisions link1="shoulder_roll_r_link" link2="shoulder_yaw_r_link" reason="Adjacent" />
+    <disable_collisions link1="shoulder_yaw_r_link" link2="elbow_pitch_r_link" reason="Adjacent" />
+    <disable_collisions link1="elbow_pitch_r_link" link2="elbow_yaw_r_link" reason="Adjacent" />
+    <disable_collisions link1="elbow_yaw_r_link" link2="wrist_pitch_r_link" reason="Adjacent" />
+    <disable_collisions link1="wrist_pitch_r_link" link2="wrist_roll_r_link" reason="Adjacent" />
+    <disable_collisions link1="wrist_roll_r_link" link2="right_tcp_link" reason="Adjacent" />
+</robot>

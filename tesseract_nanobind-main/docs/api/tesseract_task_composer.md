@@ -1,0 +1,315 @@
+# tesseract_robotics.tesseract_task_composer
+
+Task composition and planning pipelines.
+
+## Overview
+
+TaskComposer orchestrates complex planning tasks by chaining planners,
+post-processors, and validators into pipelines.
+
+```python
+from tesseract_robotics.tesseract_task_composer import (
+    TaskComposerPluginFactory, TaskflowTaskComposerExecutor,
+    TaskComposerDataStorage, TaskComposerContext,
+    createTaskComposerPluginFactory, createTaskComposerDataStorage,
+)
+```
+
+## Quick Start
+
+```python
+from tesseract_robotics.tesseract_task_composer import (
+    createTaskComposerPluginFactory, createTaskComposerDataStorage,
+    TaskflowTaskComposerExecutor,
+)
+from tesseract_robotics.tesseract_command_language import (
+    AnyPoly_wrap_CompositeInstruction, AnyPoly_wrap_ProfileDictionary,
+    AnyPoly_as_CompositeInstruction,
+)
+
+# Create factory and executor
+factory = createTaskComposerPluginFactory()
+executor = TaskflowTaskComposerExecutor(factory, 4)  # 4 threads
+
+# Get pipeline task
+task = factory.createTaskComposerNode("TrajOptPipeline")
+
+# Setup data storage
+data = createTaskComposerDataStorage()
+data.setData("planning_input", AnyPoly_wrap_CompositeInstruction(program))
+data.setData("environment", AnyPoly_wrap_EnvironmentConst(env))
+data.setData("profiles", AnyPoly_wrap_ProfileDictionary(profiles))
+
+# Execute
+future = executor.run(task, data)
+future.wait()
+
+# Get result
+context = future.context
+output_key = task.getOutputKeys().get("program")
+result = AnyPoly_as_CompositeInstruction(context.data_storage.getData(output_key))
+```
+
+## Components
+
+### TaskComposerPluginFactory
+
+Loads pipeline definitions from YAML config.
+
+```python
+from tesseract_robotics.tesseract_task_composer import (
+    TaskComposerPluginFactory, createTaskComposerPluginFactory
+)
+
+# Use bundled config (auto-configured)
+factory = createTaskComposerPluginFactory()
+
+# Or specify config file
+factory = TaskComposerPluginFactory(config_path)
+
+# Get available pipelines
+# Common pipelines: TrajOptPipeline, OMPLPipeline, FreespaceMotionPipeline
+task = factory.createTaskComposerNode("TrajOptPipeline")
+```
+
+### TaskflowTaskComposerExecutor
+
+Executes tasks with parallel support.
+
+```python
+from tesseract_robotics.tesseract_task_composer import TaskflowTaskComposerExecutor
+
+executor = TaskflowTaskComposerExecutor(factory, num_threads=4)
+
+future = executor.run(task, data_storage)
+future.wait()
+
+# Check success
+if future.context.isSuccessful():
+    print("Planning succeeded")
+```
+
+### TaskComposerDataStorage
+
+Key-value storage for pipeline data.
+
+```python
+from tesseract_robotics.tesseract_task_composer import createTaskComposerDataStorage
+from tesseract_robotics.tesseract_command_language import (
+    AnyPoly_wrap_CompositeInstruction, AnyPoly_wrap_ProfileDictionary,
+)
+
+data = createTaskComposerDataStorage()
+
+# Set inputs
+data.setData("planning_input", AnyPoly_wrap_CompositeInstruction(program))
+data.setData("environment", AnyPoly_wrap_EnvironmentConst(env))
+data.setData("profiles", AnyPoly_wrap_ProfileDictionary(profiles))
+
+# Get outputs
+result = data.getData("program")
+```
+
+### TaskComposerContext
+
+Execution context with results and status.
+
+```python
+context = future.context
+
+# Check status
+if context.isSuccessful():
+    output = context.data_storage.getData(output_key)
+else:
+    print("Failed")
+
+# Access task info
+info = context.task_infos
+```
+
+### TaskComposerFuture
+
+Async execution handle.
+
+```python
+future = executor.run(task, data)
+
+# Wait for completion
+future.wait()
+
+# Or wait with timeout (milliseconds)
+completed = future.waitFor(5000)  # 5 seconds
+
+# Get context
+context = future.context
+```
+
+### DOT Graph Export
+
+Every `TaskComposerNode` (pipelines included) exports its task graph as Graphviz DOT, mirroring the C++ `dump()`:
+
+```python
+task = factory.createTaskComposerNode("FreespacePipeline")
+
+# Structure only
+dot = task.getDotgraph()             # DOT source as a string
+task.saveDotgraph("pipeline.dot")    # write to file, returns bool
+
+# Annotated with execution results — pass the run's TaskComposerNodeInfoContainer:
+# successful nodes render green with execution time, failed/aborted nodes red
+future = executor.run(task, data)
+future.wait()
+dot = task.getDotgraph(future.context.task_infos)
+task.saveDotgraph("debug.dot", future.context.task_infos)
+```
+
+Render with graphviz: `dot -Tsvg pipeline.dot -o pipeline.svg`.
+
+See [Visualizing Pipelines](../user-guide/task-composer.md#visualizing-pipelines) for rendered graphs of the stock pipelines.
+
+## Available Pipelines
+
+### High-Level API (TaskComposer)
+
+The `TaskComposer` class provides user-friendly pipeline names:
+
+| Pipeline | Description |
+|----------|-------------|
+| `FreespaceMotionPipeline` | OMPL + TrajOpt smoothing + time param |
+| `CartesianMotionPipeline` | Cartesian path with TrajOpt |
+| `OMPLPipeline` | OMPL sampling-based planning only |
+| `TrajOptPipeline` | TrajOpt optimization only |
+| `DescartesPipeline` | Descartes graph search |
+
+### Raw Config Pipelines
+
+All pipelines available via `createTaskComposerNode()`:
+
+| Pipeline | Description |
+|----------|-------------|
+| `FreespacePipeline` | OMPL + TrajOpt + time param |
+| `FreespaceIfoptPipeline` | OMPL + TrajOptIfopt (OSQP) |
+| `CartesianPipeline` | Cartesian path planning |
+| `OMPLPipeline` | OMPL only |
+| `TrajOptPipeline` | TrajOpt only |
+| `TrajOptIfoptPipeline` | TrajOptIfopt (OSQP solver) |
+| `DescartesFPipeline` | Descartes forward search |
+| `DescartesDPipeline` | Descartes backward search |
+| `RasterFtPipeline` | Raster with freespace transitions |
+| `RasterCtPipeline` | Raster with cartesian transitions |
+| `RasterFtOnlyPipeline` | Raster freespace only |
+| `RasterCtOnlyPipeline` | Raster cartesian only |
+
+See `task_composer_plugins.yaml` for the full list including global variants.
+
+## Pipeline Input/Output Keys
+
+Different pipelines use different data keys:
+
+```python
+# Get keys from task
+input_keys = task.getInputKeys()   # TaskComposerKeys
+output_keys = task.getOutputKeys()
+
+# Common patterns:
+# TrajOptPipeline: input="planning_input", output="program"
+# OMPLPipeline: input="program", output="program"
+
+# Check available keys
+if input_keys.has("planning_input"):
+    data.setData("planning_input", ...)
+elif input_keys.has("program"):
+    data.setData("program", ...)
+```
+
+## AnyPoly Wrapping
+
+TaskComposer uses type-erased `AnyPoly` for data storage:
+
+```python
+from tesseract_robotics.tesseract_task_composer import (
+    AnyPoly_wrap_CompositeInstruction,
+    AnyPoly_wrap_EnvironmentConst,
+    AnyPoly_wrap_ProfileDictionary,
+    AnyPoly_as_CompositeInstruction,
+)
+
+# Wrap for storage
+wrapped_program = AnyPoly_wrap_CompositeInstruction(program)
+wrapped_env = AnyPoly_wrap_EnvironmentConst(env)
+wrapped_profiles = AnyPoly_wrap_ProfileDictionary(profiles)
+
+# Unwrap from storage
+program = AnyPoly_as_CompositeInstruction(any_poly)
+```
+
+## Complete Example
+
+```python
+from tesseract_robotics.tesseract_task_composer import (
+    createTaskComposerPluginFactory, createTaskComposerDataStorage,
+    TaskflowTaskComposerExecutor, AnyPoly_wrap_EnvironmentConst,
+)
+from tesseract_robotics.tesseract_command_language import (
+    AnyPoly_wrap_CompositeInstruction, AnyPoly_wrap_ProfileDictionary,
+    AnyPoly_as_CompositeInstruction,
+)
+
+# Setup
+factory = createTaskComposerPluginFactory()
+executor = TaskflowTaskComposerExecutor(factory, 4)
+task = factory.createTaskComposerNode("FreespaceMotionPipeline")
+
+# Prepare data
+data = createTaskComposerDataStorage()
+data.setData("planning_input", AnyPoly_wrap_CompositeInstruction(program))
+data.setData("environment", AnyPoly_wrap_EnvironmentConst(env))
+data.setData("profiles", AnyPoly_wrap_ProfileDictionary(profiles))
+
+# Execute pipeline
+future = executor.run(task, data)
+future.wait()
+
+# Extract result
+context = future.context
+if context.isSuccessful():
+    output_key = task.getOutputKeys().get("program")
+    result = AnyPoly_as_CompositeInstruction(
+        context.data_storage.getData(output_key)
+    )
+    print(f"Planned trajectory with {len(result)} instructions")
+else:
+    print("Planning failed")
+    for name, info in context.task_infos.items():
+        if info.return_value != 0:
+            print(f"  {name}: {info.message}")
+```
+
+## High-Level Alternative
+
+For most users the `tesseract_robotics.planning` module is simpler:
+
+```python
+from tesseract_robotics.planning import Robot, TaskComposer, plan_freespace
+
+robot = Robot.from_tesseract_support("abb_irb2400")
+
+# One-liner — picks pipeline defaults per entry point
+result = plan_freespace(robot, program)
+
+# Or reuse a composer to amortize plugin loading across calls
+composer = TaskComposer.from_config(warmup=True)
+result = composer.plan(robot, program, pipeline="TrajOptPipeline")
+
+if result.successful:
+    for point in result:
+        print(point.positions)
+```
+
+## Auto-generated API Reference
+
+::: tesseract_robotics.tesseract_task_composer._tesseract_task_composer
+    options:
+      show_root_heading: false
+      show_source: false
+      members_order: source

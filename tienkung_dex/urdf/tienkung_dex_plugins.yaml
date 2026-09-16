@@ -1,0 +1,359 @@
+# Tesseract kinematics plugin configuration for 天工 Dex (TienKung) arms.
+# Referenced from tienkung_dex.srdf via <kinematics_plugin_config filename="...">
+kinematic_plugins:
+  search_libraries:
+    - tesseract_kinematics_kdl_factories
+  fwd_kin_plugins:
+    right_arm:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_tcp_link
+    right_arm_index:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_index_tip_link
+    right_arm_middle:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_middle_tip_link
+    right_arm_ring:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_ring_tip_link
+    right_arm_pinky:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_pinky_tip_link
+    right_arm_thumb:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_thumb_tip_link
+    left_arm_index:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_index_tip_link
+    left_arm_middle:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_middle_tip_link
+    left_arm_ring:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_ring_tip_link
+    left_arm_pinky:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_pinky_tip_link
+    left_arm_thumb:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_thumb_tip_link
+    left_arm:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_tcp_link
+    right_arm_waist_index:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: right_index_tip_link
+    right_arm_waist_middle:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: right_middle_tip_link
+    right_arm_waist_ring:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: right_ring_tip_link
+    right_arm_waist_pinky:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: right_pinky_tip_link
+    right_arm_waist_thumb:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: right_thumb_tip_link
+    left_arm_waist_index:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: left_index_tip_link
+    left_arm_waist_middle:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: left_middle_tip_link
+    left_arm_waist_ring:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: left_ring_tip_link
+    left_arm_waist_pinky:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: left_pinky_tip_link
+    left_arm_waist_thumb:
+      default: KDLFwdKinChain
+      plugins:
+        KDLFwdKinChain:
+          class: KDLFwdKinChainFactory
+          config:
+            base_link: pelvis
+            tip_link: left_thumb_tip_link
+  inv_kin_plugins:
+    right_arm:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_tcp_link
+    right_arm_index:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_index_tip_link
+    right_arm_middle:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_middle_tip_link
+    right_arm_ring:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_ring_tip_link
+    right_arm_pinky:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_pinky_tip_link
+    right_arm_thumb:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: right_thumb_tip_link
+    left_arm_index:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_index_tip_link
+    left_arm_middle:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_middle_tip_link
+    left_arm_ring:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_ring_tip_link
+    left_arm_pinky:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_pinky_tip_link
+    left_arm_thumb:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_thumb_tip_link
+    left_arm:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: waist_pitch_link
+            tip_link: left_tcp_link
+    right_arm_waist_index:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: right_index_tip_link
+    right_arm_waist_middle:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: right_middle_tip_link
+    right_arm_waist_ring:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: right_ring_tip_link
+    right_arm_waist_pinky:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: right_pinky_tip_link
+    right_arm_waist_thumb:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: right_thumb_tip_link
+    left_arm_waist_index:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: left_index_tip_link
+    left_arm_waist_middle:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: left_middle_tip_link
+    left_arm_waist_ring:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: left_ring_tip_link
+    left_arm_waist_pinky:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: left_pinky_tip_link
+    left_arm_waist_thumb:
+      default: KDLInvKinChainLMA
+      plugins:
+        KDLInvKinChainLMA:
+          class: KDLInvKinChainLMAFactory
+          config:
+            base_link: pelvis
+            tip_link: left_thumb_tip_link

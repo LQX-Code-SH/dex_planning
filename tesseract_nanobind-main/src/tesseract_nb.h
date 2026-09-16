@@ -1,0 +1,47 @@
+#pragma once
+
+// Standard library
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <map>
+#include <set>
+#include <array>
+#include <functional>
+#include <variant>
+#include <optional>
+#include <stdexcept>
+
+// Eigen
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
+
+// nanobind core
+#include <nanobind/nanobind.h>
+#include <nanobind/trampoline.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/set.h>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/function.h>
+#include <nanobind/stl/variant.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/bind_vector.h>
+#include <nanobind/eigen/dense.h>
+#include <nanobind/eigen/sparse.h>
+
+// Namespace aliases
+namespace nb = nanobind;
+using namespace nb::literals;
+
+// Note: Eigen::Isometry3d is bound as an explicit class in tesseract_common_bindings.cpp
+// for SWIG API compatibility (tests expect .matrix() method etc.)
+// No type caster is needed since we have explicit bindings.

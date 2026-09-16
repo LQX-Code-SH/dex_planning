@@ -1,0 +1,55 @@
+"""Test kinematics plugins load correctly.
+
+These tests verify that kinematics plugins (KDL, OPW) can be loaded and used
+via getKinematicGroup().
+
+For editable installs on macOS, the tesseract_robotics package automatically
+adds rpath to plugin factory dylibs on first import (one-time fix).
+
+IMPORTANT: These tests must explicitly delete objects in the correct order
+to prevent segfaults from GC order issues. The locator must outlive the
+environment and kinematic group.
+"""
+
+import gc
+
+from tesseract_robotics.tesseract_common import FilesystemPath, GeneralResourceLocator
+from tesseract_robotics.tesseract_environment import Environment
+
+
+def test_kdl_kinematics_plugin_loads():
+    """Test KDL kinematics plugin loads for KUKA robot."""
+    locator = GeneralResourceLocator()
+    env = Environment()
+    urdf = locator.locateResource(
+        "package://tesseract/support/urdf/lbr_iiwa_14_r820.urdf"
+    ).getFilePath()
+    srdf = locator.locateResource(
+        "package://tesseract/support/urdf/lbr_iiwa_14_r820.srdf"
+    ).getFilePath()
+    assert env.init(FilesystemPath(urdf), FilesystemPath(srdf), locator)
+
+    # This should not raise RuntimeError if plugins load correctly
+    kin_group = env.getKinematicGroup("manipulator")
+    assert kin_group is not None
+
+    # Explicit cleanup to prevent GC order segfaults
+    del kin_group, env, locator
+    gc.collect()
+
+
+def test_opw_kinematics_plugin_loads():
+    """Test OPW kinematics plugin loads for ABB robot."""
+    locator = GeneralResourceLocator()
+    env = Environment()
+    urdf = locator.locateResource("package://tesseract/support/urdf/abb_irb2400.urdf").getFilePath()
+    srdf = locator.locateResource("package://tesseract/support/urdf/abb_irb2400.srdf").getFilePath()
+    assert env.init(FilesystemPath(urdf), FilesystemPath(srdf), locator)
+
+    # This should not raise RuntimeError if plugins load correctly
+    kin_group = env.getKinematicGroup("manipulator")
+    assert kin_group is not None
+
+    # Explicit cleanup to prevent GC order segfaults
+    del kin_group, env, locator
+    gc.collect()

@@ -1,0 +1,227 @@
+name: Build & Test (macOS)
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/workflows/wheels-linux.yml'
+      - '.github/workflows/wheels-windows.yml'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - '.github/workflows/wheels-linux.yml'
+      - '.github/workflows/wheels-windows.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      # Tag builds must yield EXACTLY the tag version. A dirty CI tree otherwise makes
+      # setuptools_scm guess-next-dev (e.g. 0.35.0.4.dev0) which — local segment stripped —
+      # would publish as a stray dev release (see 0.35.0.3). Pin the version on tag builds.
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TESSERACT_ROBOTICS_NANOBIND: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      PIXI_ENV: py${{ matrix.python == '3.9' && '39' || matrix.python == '3.10' && '310' || matrix.python == '3.11' && '311' || '312' }}
+    strategy:
+      fail-fast: false  # release wheels: never let one flaky job cancel sibling builds — a partial matrix fragments the published set (see 0.35.0.2)
+      matrix:
+        # 3.9 is the Rhino 8 build (Rhino embeds CPython 3.9): a minimal py39 env
+        # provides the interpreter while the C++ stack comes from the py312 env via
+        # TESSERACT_CPP_PREFIX — the tesseract conda packages' pcl→vtk closure has
+        # no cp39 builds, so the two can't co-install in one env.
+        python: ['3.9', '3.10', '3.11', '3.12']
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        path: tesseract_nanobind
+        fetch-depth: 0  # setuptools-scm needs tag history for version derivation
+    # pixi installs the tesseract C++ libs from the tesseract-robotics conda channel
+    # (no more vcstool import / colcon build) — build-wheel links + bundles them.
+    # libomp comes from pixi (llvm-openmp) to avoid duplicate library crashes.
+    - name: setup pixi
+      uses: prefix-dev/setup-pixi@v0.8.0
+      with:
+        pixi-version: v0.70.1
+        manifest-path: tesseract_nanobind/pyproject.toml
+        cache: true
+        # Fail loudly if pixi.lock drifts from pyproject.toml instead of silently
+        # re-solving: a stale lock froze the mid-eigen-5-migration snapshot that
+        # shipped ABI-corrupted wheels (orocos-kdl built against Eigen 3.4 mixed
+        # with Eigen-5 tesseract libs → heap corruption in every KDL code path).
+        locked: true
+        # 3.9 needs BOTH envs: py39 supplies the interpreter, py312 the C++ stack.
+        environments: ${{ matrix.python == '3.9' && 'py39 py312' || env.PIXI_ENV }}
+        activate-environment: ${{ env.PIXI_ENV }}
+    - name: typecheck
+      # identical sources are typechecked by the 3.10/3.11/3.12 jobs; the minimal
+      # py39 env has no pyright
+      if: matrix.python != '3.9'
+      working-directory: tesseract_nanobind
+      run: pixi run typecheck
+    # Cache the scikit-build dir so a warm build skips the ~15-20 min nanobind
+    # recompile (incremental cmake). Per-python; any source/config/dep change
+    # invalidates it (pixi.lock is hashed: objects compiled against one conda lib
+    # set must not be relinked against another).
+    - name: restore nanobind wheel build cache
+      id: nanobind-build-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: tesseract_nanobind/build
+        key: nanobind-wheel-build-macos-py${{ matrix.python }}-${{ hashFiles('tesseract_nanobind/CMakeLists.txt', 'tesseract_nanobind/pyproject.toml', 'tesseract_nanobind/pixi.lock', 'tesseract_nanobind/src/**/*.cpp', 'tesseract_nanobind/src/**/*.h', 'tesseract_nanobind/src/**/*.hpp') }}
+    - name: build wheel
+      working-directory: tesseract_nanobind
+      env:
+        # 3.9: C++ stack from the py312 env (build scripts + CMakeLists.txt honor
+        # this; empty for other versions → falls back to the active env).
+        TESSERACT_CPP_PREFIX: ${{ matrix.python == '3.9' && format('{0}/tesseract_nanobind/.pixi/envs/py312', github.workspace) || '' }}
+      run: pixi run -e ${{ env.PIXI_ENV }} build-wheel
+    # ABI canary: install the just-built wheel into the pixi env and run the
+    # kinematics tests against it. KDL jacobians cross the binding↔lib Eigen
+    # boundary, so dep-set ABI rot (the eigen-5 lock incident) aborts here in
+    # ~30s instead of surfacing as scattered segfaults in test-wheel 15 min later.
+    # (Not on 3.9: the minimal py39 env has no pytest/numpy — its wheel is
+    # exercised by the blocking 3.9 test-wheel job instead.)
+    - name: wheel ABI canary (kinematics)
+      if: matrix.python != '3.9'
+      working-directory: tesseract_nanobind
+      run: |
+        pixi run pip install --force-reinstall --no-deps wheelhouse/tesseract*.whl
+        pixi run python -m pytest tests/tesseract_kinematics -x -q
+    - name: save nanobind wheel build cache
+      if: steps.nanobind-build-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: tesseract_nanobind/build
+        key: nanobind-wheel-build-macos-py${{ matrix.python }}-${{ hashFiles('tesseract_nanobind/CMakeLists.txt', 'tesseract_nanobind/pyproject.toml', 'tesseract_nanobind/pixi.lock', 'tesseract_nanobind/src/**/*.cpp', 'tesseract_nanobind/src/**/*.h', 'tesseract_nanobind/src/**/*.hpp') }}
+    # actions/upload-artifact@v4 intermittently fails on macOS arm64 runners with
+    # "Failed to CreateArtifact: Request timeout" (~1/3 of uploads) — a long-standing
+    # open GitHub bug (actions/upload-artifact#569, #527) inherent to arm64 mac runners'
+    # network to the artifact service. The action's 5 internal retries exhaust within the
+    # same bad window; a fresh outer re-invocation usually succeeds. Retry up to 3×; the
+    # final attempt has no continue-on-error, so a real outage still fails loud (no silent
+    # wheel loss). overwrite:true on retries clears any half-created artifact.
+    - name: archive wheel
+      id: up1
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ matrix.python }}-macos-arm64
+        path: tesseract_nanobind/wheelhouse/tesseract*.whl
+    - name: archive wheel (retry 1)
+      if: steps.up1.outcome == 'failure'
+      id: up2
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ matrix.python }}-macos-arm64
+        path: tesseract_nanobind/wheelhouse/tesseract*.whl
+        overwrite: true
+    - name: archive wheel (retry 2 — fail loud if still down)
+      if: steps.up1.outcome == 'failure' && steps.up2.outcome == 'failure'
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ matrix.python }}-macos-arm64
+        path: tesseract_nanobind/wheelhouse/tesseract*.whl
+        overwrite: true
+    - name: archive logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs-macos-arm64-py${{ matrix.python }}
+        path: '**/*.log'
+        retention-days: 2
+
+  test-wheel:
+    needs: build
+    runs-on: macos-14
+    continue-on-error: ${{ matrix.continue_on_error }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13/3.14 install the cp312-abi3 wheel (STABLE_ABI) to verify the
+        # published support matrix on macOS, not just Linux. wheel != python.
+        # 3.9 is blocking: Rhino 8 embeds CPython 3.9 — that wheel must work.
+        include:
+          - { python: '3.9',  wheel: '3.9',  continue_on_error: false }
+          - { python: '3.12', wheel: '3.12', continue_on_error: false }
+          - { python: '3.13', wheel: '3.12', continue_on_error: false }
+          - { python: '3.14', wheel: '3.12', continue_on_error: true }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tesseract_nanobind
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-${{ matrix.wheel }}-macos-arm64
+          path: wheelhouse/
+      - name: install wheel in virgin env
+        run: |
+          python -m venv test_env
+          source test_env/bin/activate
+          pip install wheelhouse/tesseract*.whl
+      - name: smoke test
+        run: |
+          source test_env/bin/activate
+          python -c "import tesseract_robotics; print('Version:', tesseract_robotics.__version__)"
+          python -c "from tesseract_robotics import tesseract_common, tesseract_geometry, tesseract_scene_graph"
+      - name: run full tests
+        # Serial (no xdist): planning tests (OMPL/TrajOpt) segfault under xdist
+        # on macOS — fork+OpenMP threads don't mix. Linux handles it fine.
+        run: |
+          source test_env/bin/activate
+          pip install pytest scipy
+          cd tesseract_nanobind
+          pytest tests \
+            --ignore=tests/benchmarks \
+            -v --tb=short
+
+  publish:
+    needs: [build, test-wheel]
+    if: startsWith(github.ref, 'refs/tags/')
+    # pypa/gh-action-pypi-publish is hard-Linux-only. The artifacts are already
+    # built for macOS arm64 — we just download and twine-upload them from Linux.
+    runs-on: ubuntu-latest
+    environment: macos
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: python-*-macos-arm64
+        merge-multiple: true
+        path: dist/
+    - name: List wheels
+      run: ls -la dist/
+    - name: assert wheel version == tag (block stray dev/mismatched release)
+      run: |
+        for whl in dist/*.whl; do
+          v=$(basename "$whl" | cut -d- -f2)
+          [ "$v" = "$GITHUB_REF_NAME" ] || { echo "::error::$whl is version $v, expected tag $GITHUB_REF_NAME — refusing to publish"; exit 1; }
+        done
+        echo "✓ all wheels are version $GITHUB_REF_NAME"
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        skip-existing: true  # idempotent re-runs: skip already-uploaded wheels instead of 400-aborting the batch

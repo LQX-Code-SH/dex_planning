@@ -1,0 +1,281 @@
+[build-system]
+requires = [
+    "scikit-build-core >=0.10",
+    "nanobind >=1.3.2",
+    "setuptools-scm >=8",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "tesseract-robotics-nanobind"
+description = "Tesseract robotics Python bindings (nanobind)"
+readme = "README.md"
+# Floor is 3.9 for Rhino 8 (embeds CPython 3.9; cp39 wheels ship for macOS + Windows,
+# the platforms Rhino runs on). The tesseract C++ conda packages can't co-install with
+# python 3.9 (their pcl→vtk closure has no cp39 builds), so cp39 wheels are built from
+# the minimal py39 pixi env against the py312 env's C++ stack via TESSERACT_CPP_PREFIX
+# (see [tool.pixi.feature.py39] below and the wheels workflows).
+requires-python = ">=3.9"
+# Runtime dependencies - keep in sync with requirements.txt
+dependencies = [
+    "numpy>=1.21.0",
+    "loguru>=0.7.0",
+    "pyyaml>=6.0",
+    "scipy>=1.7.0",          # Required for Eigen sparse matrix conversion in nanobind
+    "aiohttp",               # Required for tesseract_robotics.viewer
+    "importlib-resources",   # Required for tesseract_robotics.viewer
+]
+
+authors = [
+    { name = "Jelle Feringa", email = "jelle@terrestrial.construction" },
+    { name = "John Wason", email = "wason@wasontech.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: Unix",
+    "Operating System :: POSIX",
+    # "Operating System :: macOS",
+    # "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python",
+    # "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",   # Rhino 8 (macOS + Windows wheels)
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",  # covered by the cp312-abi3 wheel
+    "Programming Language :: Python :: 3.14",  # covered by the cp312-abi3 wheel
+    "Programming Language :: C++",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "License :: OSI Approved :: Apache Software License",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/tesseract-robotics/tesseract_nanobind"
+Repository = "https://github.com/tesseract-robotics/tesseract_nanobind"
+
+[project.scripts]
+tesseract_nanobind_selftest = "tesseract_robotics.selftest:main"
+tesseract_abb_irb2400_viewer = "tesseract_robotics.examples.abb_irb2400_viewer:main"
+tesseract_basic_cartesian_example = "tesseract_robotics.examples.basic_cartesian_example:main"
+tesseract_car_seat_example = "tesseract_robotics.examples.car_seat_example:main"
+tesseract_chain_example = "tesseract_robotics.examples.chain_example:main"
+tesseract_freespace_hybrid_example = "tesseract_robotics.examples.freespace_hybrid_example:main"
+tesseract_freespace_ompl_example = "tesseract_robotics.examples.freespace_ompl_example:main"
+tesseract_geometry_showcase_example = "tesseract_robotics.examples.geometry_showcase_example:main"
+tesseract_glass_upright_example = "tesseract_robotics.examples.glass_upright_example:main"
+tesseract_online_planning_example = "tesseract_robotics.examples.online_planning_example:main"
+tesseract_online_planning_sqp_example = "tesseract_robotics.examples.online_planning_sqp_example:main"
+tesseract_pointcloud_octree_collision_example = "tesseract_robotics.examples.pointcloud_octree_collision_example:main"
+tesseract_pick_and_place_example = "tesseract_robotics.examples.pick_and_place_example:main"
+tesseract_puzzle_piece_auxillary_axes_example = "tesseract_robotics.examples.puzzle_piece_auxillary_axes_example:main"
+tesseract_raster_example = "tesseract_robotics.examples.raster_example:main"
+tesseract_reeds_shepp_example = "tesseract_robotics.examples.reeds_shepp_example:run"
+tesseract_scene_graph_example = "tesseract_robotics.examples.scene_graph_example:main"
+tesseract_shapes_viewer = "tesseract_robotics.examples.shapes_viewer:main"
+tesseract_collision_example = "tesseract_robotics.examples.tesseract_collision_example:main"
+tesseract_kinematics_example = "tesseract_robotics.examples.tesseract_kinematics_example:main"
+tesseract_material_mesh_viewer = "tesseract_robotics.examples.tesseract_material_mesh_viewer:main"
+tesseract_twc_workcell_positioner_viewer = "tesseract_robotics.examples.twc_workcell_positioner_viewer:main"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--strict-markers", "--tb=short"]
+markers = [
+    "viewer: Viewer examples (deselect with '-m \"not viewer\"')",
+    "planning: Motion planning examples",
+    "basic: Basic examples (collision, kinematics, scene_graph)",
+    "lowlevel: Low-level API examples",
+]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = "build/{wheel_tag}"
+wheel.py-api = "cp312"
+wheel.packages = ["src/tesseract_robotics"]
+cmake.version = ">=3.15"
+cmake.build-type = "Release"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
+[tool.setuptools_scm]
+root = "."
+tag_regex = "^(?P<version>\\d+\\.\\d+\\.\\d+\\.\\d+)$"
+# PyPI rejects PEP 440 local-version segments (the "+g<sha>.d<date>" suffix the default
+# node-and-date scheme stamps onto a dirty build tree) with HTTP 400. CI wheel jobs can
+# dirty the tree (generated .pyi stubs / in-place YAML patches), so without this twine
+# aborts mid-batch and fragments the release across platforms (see 0.35.0.2). Force a
+# local-free version so every tag build is uploadable.
+local_scheme = "no-local-version"
+
+[tool.scikit-build.cmake.define]
+CMAKE_POLICY_DEFAULT_CMP0135 = "NEW"
+
+# Note: cibuildwheel is not used because this package links the prebuilt
+# tesseract C++ conda packages. See .github/workflows/wheels-{linux,macos,windows}.yml
+# for the custom CI that installs them via pixi and bundles them into the wheels.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = ["*.pyi"] # auto-generated stubs have C++ type strings
+
+[tool.ruff.lint]
+# FA102: PEP 604 unions need `from __future__ import annotations` on the py39 floor (gh-92)
+select = ["E", "F", "I", "UP", "FA102"] # errors, pyflakes, isort, pyupgrade, py39 unions
+ignore = ["E501"]                       # line too long (handled by formatter)
+
+[tool.ruff.lint.per-file-ignores]
+# nanobind extension modules use star imports - ruff can't see into .so files
+"src/tesseract_robotics/tesseract_*/__init__.py" = ["F403", "F405"]
+# examples __init__.py re-export run()/main() entry points for REPL/`python -m` use
+"src/tesseract_robotics/examples/**/__init__.py" = ["F401", "F403", "I001"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ============================================================================
+# Pixi configuration - replaces conda environment.yml
+# ============================================================================
+
+[tool.pixi.workspace]
+name = "tesseract_robotics_dev"
+# tesseract-robotics ships the prebuilt tesseract C++ libs + CMake configs (v0.35.0,
+# all four platforms); conda-forge stays highest-priority so common deps (boost, eigen,
+# ompl, …) resolve from there exactly as the tesseract feedstocks were built against.
+channels = ["conda-forge", "tesseract-robotics"]
+platforms = ["osx-arm64", "linux-64", "win-64", "linux-aarch64"]
+
+[tool.pixi.dependencies]
+python = ">=3.10"  # conda tesseract stack (pcl→vtk) has no cp39 build
+
+# Build tools
+cmake = ">=3.15,<4"
+ninja = "*"
+make = "*"
+pkg-config = "*"
+git = "*"  # needed by setuptools-scm for version derivation; CI pixi envs don't see system git
+
+# Prebuilt tesseract C++ libs (CMake configs + headers + .so/.dylib) from the
+# tesseract-robotics conda channel. These replace the from-source colcon build:
+# every C++ dependency (boost, eigen, ompl, bullet, fcl, taskflow, …) now arrives
+# transitively as a run/host dep of these packages, matched to how the feedstocks
+# were built. Pinned to 0.35.0 to track the version this binding set targets.
+tesseract-robotics = "==0.35.0"
+tesseract-robotics-planning = "==0.35.0"
+# trajopt, descartes-light, and every C++ dependency (boost, eigen, ompl, bullet, …)
+# arrive transitively, matched to how the feedstocks were built. Don't pin them here:
+# tesseract-robotics 0.35.0 was rebuilt against conda-forge's eigen 5.0.1
+# (eigen-abi >=5.0.1.100), so an explicit `eigen <3.5` or `trajopt = "*"` deadlocks
+# the solve. Let the tesseract packages drive the resolution.
+
+# Python build deps
+pip = "*"
+setuptools = ">=68,<82"
+setuptools-scm = ">=8"
+wheel = "*"
+scikit-build-core = ">=0.10,<1"
+nanobind = ">=1.3.2,<3"
+
+# Dev/test deps
+pytest = ">=7.0"
+pytest-xdist = ">=3.0"
+pytest-benchmark = "*"
+ruff = ">=0.8.0"
+pre-commit = ">=3.0"
+
+# patchelf: ELF-only (Linux). macOS uses install_name_tool (in base system).
+# Windows DLLs have no rpath; delvewheel handles bundling instead.
+[tool.pixi.target.linux-64.dependencies]
+patchelf = "*"
+
+[tool.pixi.target.linux-aarch64.dependencies]
+patchelf = "*"
+
+[tool.pixi.pypi-dependencies]
+# Note: tesseract-robotics-nanobind NOT here - use `pixi run install` (pip install -e .)
+numpy = ">=1.21.0"
+loguru = ">=0.7.0"
+scipy = ">=1.7.0"              # Required for nanobind Eigen sparse matrix conversion
+
+# Docs
+mkdocs-material = ">=9.0"
+mkdocstrings = { version = ">=0.24", extras = ["python"] }
+mkdocs-exclude = ">=1.0"
+
+# Type checking
+pyright = ">=1.1"
+pytest-testmon = ">=2.0"  # PyPI version for pytest>=7 compat
+
+[tool.pixi.tasks]
+test = { cmd = "python -m pytest tests --ignore=tests/benchmarks -x -q -n auto", depends-on = [
+    "install",
+] }
+test-benchmark = { cmd = "python -m pytest tests/benchmarks -x -q", depends-on = [
+    "install",
+], description = "Run benchmark tests (serial, no xdist)" }
+lint = "ruff check ."
+fmt = "ruff format ."
+typecheck = { cmd = "pyright src/tesseract_robotics", description = "Type check with pyright" }
+build-wheel = { cmd = "bash scripts/build_linux_wheel.sh", description = "Build portable manylinux wheel (patchelf + plugins + YAML patch). macOS overrides this via the osx-arm64 target." }
+install = { cmd = "pip install -e . --no-build-isolation", description = "Install bindings (editable); C++ libs come from the tesseract-robotics conda packages" }
+build = { depends-on = [
+    "install",
+], description = "Install bindings against the conda tesseract C++ libs" }
+docs = { cmd = "mkdocs serve --dev-addr=localhost:8000 --open", description = "Live docs server with auto-reload" }
+docs-build = { cmd = "mkdocs build", description = "Build static docs to site/" }
+docs-dotgraphs = { cmd = "python scripts/generate_pipeline_dotgraphs.py", depends-on = [
+    "install",
+], description = "Regenerate pipeline DOT graph SVGs embedded in the docs (requires graphviz)" }
+
+# macOS uses delocate + install_name_tool instead of patchelf, so build-wheel
+# delegates to a platform-specific script. The base task (above) handles Linux;
+# this override handles macOS. See scripts/build_{linux,macos}_wheel.sh.
+[tool.pixi.target.osx-arm64.tasks]
+build-wheel = { cmd = "zsh scripts/build_macos_wheel.sh", description = "Build portable macOS wheel (delocate + plugins + YAML patch)" }
+
+
+# Python version features for CI matrix builds
+[tool.pixi.feature.py310.dependencies]
+python = "3.10.*"
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+# Rhino 8 embeds CPython 3.9, so cp39 wheels stay on the menu (macOS + Windows, the
+# platforms Rhino runs on). The tesseract C++ conda stack can't co-install with
+# python 3.9 (pcl→vtk has no cp39 builds), so this feature carries ONLY the 3.9
+# interpreter + wheel build tooling and is used with no-default-feature. The C++ libs
+# come from the py312 env via TESSERACT_CPP_PREFIX (CMakeLists.txt + build scripts).
+# scikit-build-core/nanobind from PyPI: conda-forge stopped producing cp39 builds.
+[tool.pixi.feature.py39.dependencies]
+python = "3.9.*"
+pip = "*"
+cmake = ">=3.15,<4"
+ninja = "*"
+git = "*" # setuptools-scm version derivation
+
+[tool.pixi.feature.py39.pypi-dependencies]
+scikit-build-core = ">=0.10,<1"
+nanobind = ">=1.3.2,<3"
+setuptools-scm = ">=8"
+
+# build-wheel for the cp39 cross-build (tasks live in features; a no-default-feature
+# env doesn't inherit the default build-wheel task). Same scripts as the default task —
+# they pick up TESSERACT_CPP_PREFIX from the environment.
+[tool.pixi.feature.py39.target.osx-arm64.tasks]
+build-wheel = { cmd = "zsh scripts/build_macos_wheel.sh", description = "Build portable cp39 macOS wheel against TESSERACT_CPP_PREFIX" }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+py39 = { features = ["py39"], no-default-feature = true, solve-group = "py39" }
+py310 = { features = ["py310"], solve-group = "py310" }
+py311 = { features = ["py311"], solve-group = "py311" }
+py312 = { features = ["py312"], solve-group = "py312" }

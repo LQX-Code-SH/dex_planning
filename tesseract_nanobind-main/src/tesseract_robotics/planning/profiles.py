@@ -1,0 +1,1155 @@
+"""
+Motion planner profile creation helpers.
+
+These helpers create ProfileDictionary objects with planner profiles
+matching C++ example defaults (collision margins, cost coefficients, etc.).
+
+Also provides helpers for:
+- OMPL planner configurators (RRTConnect, RRTstar, SBL)
+- Time parameterization (TOTG, ISP)
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from tesseract_robotics.tesseract_command_language import ProfileDictionary
+
+
+def _get_cpu_count() -> int:
+    """Get number of available CPUs for parallel planning."""
+    return os.cpu_count() or 1
+
+
+# Standard profile names used across examples and pipelines
+STANDARD_PROFILE_NAMES = ["DEFAULT", "FREESPACE", "CARTESIAN", "RASTER", "UPRIGHT"]
+
+# Planner-specific relevant profile names
+# OMPL: only freespace planning, Cartesian/Raster/Upright don't apply
+OMPL_PROFILE_NAMES = ["DEFAULT", "FREESPACE"]
+# TrajOpt: can optimize any motion type
+TRAJOPT_PROFILE_NAMES = STANDARD_PROFILE_NAMES
+# Descartes: Cartesian sampling, freespace doesn't apply
+DESCARTES_PROFILE_NAMES = ["DEFAULT", "CARTESIAN", "RASTER"]
+
+TRAJOPT_DEFAULT_NAMESPACE = "TrajOptMotionPlannerTask"
+TRAJOPT_IFOPT_DEFAULT_NAMESPACE = "TrajOptIfoptMotionPlannerTask"
+
+
+def _create_trajopt_profiles():
+    """Create TrajOpt composite and plan profiles with C++ example defaults (internal helper).
+
+    Returns:
+        Tuple of (composite_profile, plan_profile) configured for constraints mode.
+
+    Note:
+        0.33 API: TrajOptCollisionConfig replaces CollisionCostConfig/CollisionConstraintConfig.
+        Must set collision_check_config.type and collision_coeff_data to match C++ examples.
+        Uses LVS_CONTINUOUS for continuous collision checking (critical for attached objects).
+    """
+    from tesseract_robotics.tesseract_collision import CollisionEvaluatorType
+    from tesseract_robotics.tesseract_motion_planners_trajopt import (
+        TrajOptDefaultCompositeProfile,
+        TrajOptDefaultPlanProfile,
+    )
+
+    composite = TrajOptDefaultCompositeProfile()
+    # 0.33 API: Configure collision configs to match C++ car_seat_example.cpp
+    # LVS_CONTINUOUS: Longest Valid Segment continuous collision checking
+    # Critical for large attached objects that could pass through obstacles
+
+    # Constraint config: margin=0, coeff=10 (hard constraint at zero margin)
+    composite.collision_constraint_config.enabled = True
+    composite.collision_constraint_config.collision_margin_buffer = 0.005
+    composite.collision_constraint_config.collision_check_config.type = (
+        CollisionEvaluatorType.LVS_CONTINUOUS
+    )
+    composite.collision_constraint_config.collision_check_config.longest_valid_segment_length = 0.1
+    composite.collision_constraint_config.collision_coeff_data.setDefaultCollisionCoeff(10.0)
+
+    # Cost config: margin=0.005, coeff=50 (soft cost pushing away from obstacles)
+    composite.collision_cost_config.enabled = True
+    composite.collision_cost_config.collision_margin_buffer = 0.01
+    composite.collision_cost_config.collision_check_config.type = (
+        CollisionEvaluatorType.LVS_CONTINUOUS
+    )
+    composite.collision_cost_config.collision_check_config.longest_valid_segment_length = 0.1
+    composite.collision_cost_config.collision_coeff_data.setDefaultCollisionCoeff(50.0)
+
+    plan = TrajOptDefaultPlanProfile()
+    plan.cartesian_cost_config.enabled = False
+    plan.cartesian_constraint_config.enabled = True
+    plan.joint_cost_config.enabled = False
+    plan.joint_constraint_config.enabled = True
+
+    return composite, plan
+
+
+def _create_trajopt_upright_profiles():
+    """Create TrajOpt profiles for glass-upright constraints (C++ glass_upright_example.cpp).
+
+    The UPRIGHT profile constrains orientation while allowing free position movement.
+
+    Returns:
+        Tuple of (composite_profile, plan_profile) for orientation-constrained motion.
+
+    Note:
+        0.33 API: TrajOptCollisionConfig replaces CollisionCostConfig/CollisionConstraintConfig.
+        Must set collision_check_config.type and collision_coeff_data to match C++.
+    """
+    import numpy as np
+
+    from tesseract_robotics.tesseract_collision import CollisionEvaluatorType
+    from tesseract_robotics.tesseract_motion_planners_trajopt import (
+        TrajOptDefaultCompositeProfile,
+        TrajOptDefaultPlanProfile,
+    )
+
+    composite = TrajOptDefaultCompositeProfile()
+    # 0.33 API: Configure collision configs to match C++ glass_upright_example.cpp
+    # Cost config: TrajOptCollisionConfig(0.01, 1) with DISCRETE evaluator
+    # C++ sets: contact_manager_config.default_margin = 0.01, collision_coeff_data = 1
+    composite.collision_cost_config.enabled = True
+    composite.collision_cost_config.contact_manager_config.default_margin = 0.01
+    composite.collision_cost_config.collision_margin_buffer = 0.01
+    composite.collision_cost_config.collision_check_config.type = CollisionEvaluatorType.DISCRETE
+    composite.collision_cost_config.collision_coeff_data.setDefaultCollisionCoeff(1.0)
+    # Constraint config: TrajOptCollisionConfig(0.01, 1) with DISCRETE evaluator
+    composite.collision_constraint_config.enabled = True
+    composite.collision_constraint_config.contact_manager_config.default_margin = 0.01
+    composite.collision_constraint_config.collision_margin_buffer = 0.01
+    composite.collision_constraint_config.collision_check_config.type = (
+        CollisionEvaluatorType.DISCRETE
+    )
+    composite.collision_constraint_config.collision_coeff_data.setDefaultCollisionCoeff(1.0)
+    # Velocity smoothing for regularization (C++ sets velocity_coeff=Ones(1))
+    composite.smooth_velocities = True
+    composite.velocity_coeff = np.ones(1)
+    composite.smooth_accelerations = False
+    composite.acceleration_coeff = np.ones(1)
+    composite.smooth_jerks = False
+
+    plan = TrajOptDefaultPlanProfile()
+    plan.joint_cost_config.enabled = False
+    plan.cartesian_cost_config.enabled = False
+    plan.cartesian_constraint_config.enabled = True
+    # C++ coeff: [0,0,0,5,5,5] - position free (0), orientation constrained (5)
+    plan.cartesian_constraint_config.coeff = np.array([0.0, 0.0, 0.0, 5.0, 5.0, 5.0])
+
+    return composite, plan
+
+
+def create_trajopt_ifopt_default_profiles(
+    profile_names: list[str] | None = None,
+) -> ProfileDictionary:
+    """Create TrajOptIfopt profiles matching C++ example defaults.
+
+    TrajOptIfopt uses Sequential Quadratic Programming (SQP) with OSQP solver
+    to optimize trajectories. It provides a modern alternative to the original
+    TrajOpt implementation using the IFOPT interface.
+
+    Profile Configuration:
+        Composite Profile (applies to entire trajectory):
+        - smooth_velocities: False (disabled; requires velocity_coeff sized to DOF)
+        - smooth_accelerations: False
+        - smooth_jerks: False
+        - collision_cost_config / collision_constraint_config: left at the C++
+          defaults (both enabled, no margins set). Unlike the sco TrajOpt
+          profiles, these are not pre-configured here because the useful margin
+          depends on the robot and scene — see Tuning below.
+
+        Plan Profile (applies per waypoint):
+        - cartesian_constraint: enabled (enforce Cartesian targets exactly)
+        - joint_constraint: enabled (enforce joint targets exactly)
+
+        Solver Profile (OSQP configuration):
+        - Uses default OSQP settings for QP solving
+        - opt_params (the SQP loop) left at the C++ defaults: max_iterations=50,
+          max_qp_solver_failures=3
+
+    Args:
+        profile_names: Profile names to register (default: TRAJOPT_PROFILE_NAMES)
+            Standard names: ["DEFAULT", "FREESPACE", "CARTESIAN", "RASTER", "UPRIGHT"]
+
+    Returns:
+        ProfileDictionary with configured TrajOptIfopt profiles
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_trajopt_ifopt_default_profiles
+        )
+
+        # Create profiles with standard names
+        profiles = create_trajopt_ifopt_default_profiles()
+
+        # Use with TrajOptIfoptPipeline
+        result = composer.plan(robot, program,
+                              pipeline='TrajOptIfoptPipeline',
+                              profiles=profiles)
+
+    Tuning:
+        Both knob sets are reachable from the planner module, which re-exports
+        CollisionEvaluatorType and TrajOptCollisionConfig for this purpose:
+
+        from tesseract_robotics.tesseract_motion_planners_trajopt_ifopt import (
+            CollisionEvaluatorType,
+            TrajOptIfoptDefaultCompositeProfile,
+            TrajOptIfoptOSQPSolverProfile,
+        )
+
+        composite = TrajOptIfoptDefaultCompositeProfile()
+        composite.collision_constraint_config.contact_manager_config.default_margin = 0.01
+        composite.collision_constraint_config.collision_check_config.type = (
+            CollisionEvaluatorType.LVS_DISCRETE
+        )
+        # max_num_cnt is honoured by trajopt_ifopt only — it fixes the number of
+        # collision constraint rows per timestep so QP size stops tracking contact count
+        composite.collision_constraint_config.max_num_cnt = 3
+
+        solver = TrajOptIfoptOSQPSolverProfile()
+        solver.opt_params.max_iterations = 100
+
+        The profiles this helper builds can also be retrieved and edited in
+        place — getProfile returns the concrete profile type, not the Profile
+        base. Note that one composite/plan/solver instance is shared by all
+        profile_names, so an edit applies to every registered name:
+
+        composite = profiles.getProfile(
+            TrajOptIfoptDefaultCompositeProfile().getKey(),
+            TRAJOPT_IFOPT_DEFAULT_NAMESPACE,
+            "DEFAULT",
+        )
+        composite.collision_constraint_config.max_num_cnt = 3
+    """
+    from tesseract_robotics.tesseract_motion_planners_trajopt_ifopt import (
+        ProfileDictionary_addTrajOptIfoptCompositeProfile,
+        ProfileDictionary_addTrajOptIfoptPlanProfile,
+        ProfileDictionary_addTrajOptIfoptSolverProfile,
+        TrajOptIfoptDefaultCompositeProfile,
+        TrajOptIfoptDefaultPlanProfile,
+        TrajOptIfoptOSQPSolverProfile,
+    )
+
+    if profile_names is None:
+        profile_names = TRAJOPT_PROFILE_NAMES
+
+    # Create profiles with default settings
+    # Note: smooth_velocities requires velocity_coeff to be set (size 1 or n_dof)
+    # We disable velocity smoothing by default since coeff size depends on robot DOF
+    # Users can enable it by setting velocity_coeff before calling this
+    composite = TrajOptIfoptDefaultCompositeProfile()
+    composite.smooth_velocities = False
+    composite.smooth_accelerations = False
+    composite.smooth_jerks = False
+
+    plan = TrajOptIfoptDefaultPlanProfile()
+    plan.cartesian_cost_config.enabled = False
+    plan.cartesian_constraint_config.enabled = True
+    plan.joint_cost_config.enabled = False
+    plan.joint_constraint_config.enabled = True
+
+    solver = TrajOptIfoptOSQPSolverProfile()
+
+    # Register under all requested names
+    profiles = ProfileDictionary()
+    for name in profile_names:
+        ProfileDictionary_addTrajOptIfoptCompositeProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, composite
+        )
+        ProfileDictionary_addTrajOptIfoptPlanProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, plan
+        )
+        ProfileDictionary_addTrajOptIfoptSolverProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, solver
+        )
+
+    return profiles
+
+
+def create_trajopt_default_profiles(
+    profile_names: list[str] | None = None,
+) -> ProfileDictionary:
+    """Create TrajOpt profiles matching C++ example defaults.
+
+    This creates profiles with collision and cost/constraint settings that
+    match the tesseract_examples C++ code (car_seat_example.cpp, etc.).
+
+    TrajOpt uses Sequential Convex Optimization (SCO) to optimize trajectories
+    by minimizing costs (smoothness, collision distance) while satisfying
+    constraints (joint limits, collision avoidance, waypoint targets).
+
+    Profile Configuration (0.33 API):
+        Composite Profile (applies to entire trajectory):
+        - collision_constraint: margin=0.00, collision_margin_buffer=0.005, coeff=10
+        - collision_cost: margin=0.005, collision_margin_buffer=0.01, coeff=50
+
+        Plan Profile (applies per waypoint):
+        - cartesian_constraint: enabled (enforce Cartesian targets exactly)
+        - joint_constraint: enabled (enforce joint targets exactly)
+        - cartesian_cost: disabled (no soft Cartesian costs)
+        - joint_cost: disabled (no soft joint costs)
+
+    Args:
+        profile_names: Profile names to register (default: TRAJOPT_PROFILE_NAMES)
+            Standard names: ["DEFAULT", "FREESPACE", "CARTESIAN", "RASTER", "UPRIGHT"]
+
+    Returns:
+        ProfileDictionary with configured TrajOpt profiles
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_trajopt_default_profiles
+        )
+
+        # Create profiles with standard names
+        profiles = create_trajopt_default_profiles()
+
+        # Or specify custom profile names
+        profiles = create_trajopt_default_profiles(
+            profile_names=["MY_PROFILE"]
+        )
+    """
+    from tesseract_robotics.tesseract_motion_planners_trajopt import (
+        ProfileDictionary_addTrajOptCompositeProfile,
+        ProfileDictionary_addTrajOptPlanProfile,
+    )
+
+    if profile_names is None:
+        profile_names = TRAJOPT_PROFILE_NAMES
+
+    composite, plan = _create_trajopt_profiles()
+
+    # Register under all requested names
+    profiles = ProfileDictionary()
+    for name in profile_names:
+        ProfileDictionary_addTrajOptCompositeProfile(
+            profiles, TRAJOPT_DEFAULT_NAMESPACE, name, composite
+        )
+        ProfileDictionary_addTrajOptPlanProfile(profiles, TRAJOPT_DEFAULT_NAMESPACE, name, plan)
+
+    return profiles
+
+
+def create_trajopt_upright_profiles(
+    profile_names: list[str] | None = None,
+) -> ProfileDictionary:
+    """Create TrajOpt profiles for orientation-constrained motion (glass-upright).
+
+    This creates profiles matching the C++ glass_upright_example.cpp exactly:
+    - Collision: margin=0.01, collision_margin_buffer=0.01, coeff=1 (LVS_CONTINUOUS)
+    - Cartesian constraint: coeff=[0,0,0,5,5,5] (position free, orientation constrained)
+
+    The UPRIGHT profile keeps tool orientation constant while allowing position to vary.
+    Essential for tasks like carrying a glass of water without spilling.
+
+    Args:
+        profile_names: Profile names to register (default: ["UPRIGHT"])
+
+    Returns:
+        ProfileDictionary with configured TrajOpt profiles for orientation constraints
+
+    Usage:
+        from tesseract_robotics.planning.profiles import create_trajopt_upright_profiles
+
+        profiles = create_trajopt_upright_profiles()
+        result = composer.plan(robot, program, pipeline="TrajOptPipeline", profiles=profiles)
+    """
+    from tesseract_robotics.tesseract_motion_planners_trajopt import (
+        ProfileDictionary_addTrajOptCompositeProfile,
+        ProfileDictionary_addTrajOptPlanProfile,
+    )
+
+    if profile_names is None:
+        profile_names = ["UPRIGHT"]
+
+    composite, plan = _create_trajopt_upright_profiles()
+
+    profiles = ProfileDictionary()
+    for name in profile_names:
+        ProfileDictionary_addTrajOptCompositeProfile(
+            profiles, TRAJOPT_DEFAULT_NAMESPACE, name, composite
+        )
+        ProfileDictionary_addTrajOptPlanProfile(profiles, TRAJOPT_DEFAULT_NAMESPACE, name, plan)
+
+    return profiles
+
+
+OMPL_DEFAULT_NAMESPACE = "OMPLMotionPlannerTask"
+
+
+def create_ompl_default_profiles(
+    profile_names: list[str] | None = None,
+    planning_time: float = 10.0,
+    max_solutions: int = 10,
+    optimize: bool = True,
+    simplify: bool = False,
+    num_planners: int | None = None,
+    planner_range: float = 0.0,
+) -> ProfileDictionary:
+    """Create OMPL profiles with sensible defaults.
+
+    OMPL (Open Motion Planning Library) provides sampling-based motion planners
+    that search the configuration space for collision-free paths. This function
+    creates profiles configured with parallel RRTConnect planners.
+
+    Profile Configuration:
+        - Parallel RRTConnect planners (one per CPU by default)
+        - Planning runs until timeout OR max_solutions found
+        - Optimization enabled to improve solution quality
+        - Simplification disabled (preserves waypoints)
+
+    Args:
+        profile_names: Profile names to register (default: OMPL_PROFILE_NAMES)
+            Relevant names: ["DEFAULT", "FREESPACE"]
+            (OMPL doesn't apply to Cartesian/Raster/Upright tasks)
+        planning_time: Max planning time in seconds (default: 10.0)
+            Total time budget for all parallel planners
+        max_solutions: Max solutions to find before exiting (default: 10)
+            Stops early if this many solutions found
+        optimize: Use all planning time to optimize trajectory (default: True)
+            If True, continues improving solution until timeout
+            If False, stops at first solution
+        simplify: Simplify trajectory after planning (default: False)
+            If True, removes waypoints (may violate constraints)
+            If False, preserves all waypoints
+        num_planners: Number of parallel RRTConnect planners (default: min(4, CPU count))
+            More planners = higher chance of finding solution quickly
+
+    Returns:
+        ProfileDictionary with configured OMPL profiles
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_ompl_default_profiles
+        )
+
+        # Quick planning with defaults
+        profiles = create_ompl_default_profiles()
+
+        # Custom planning time and parallelism
+        profiles = create_ompl_default_profiles(
+            planning_time=10.0,
+            num_planners=8
+        )
+
+        # Fast first-solution mode
+        profiles = create_ompl_default_profiles(
+            planning_time=2.0,
+            optimize=False,
+            max_solutions=1
+        )
+    """
+    from tesseract_robotics.tesseract_motion_planners_ompl import (
+        OMPLRealVectorPlanProfile,
+        ProfileDictionary_addOMPLProfile,
+        RRTConnectConfigurator,
+    )
+
+    if profile_names is None:
+        profile_names = OMPL_PROFILE_NAMES
+
+    # Default to 4 planners - good balance for most problems
+    # Using CPU count can overwhelm system during parallel test runs
+    if num_planners is None:
+        num_planners = min(4, _get_cpu_count())
+
+    # Create ONE profile with the configured settings
+    profile = OMPLRealVectorPlanProfile()
+    profile.solver_config.planning_time = planning_time
+    profile.solver_config.max_solutions = max_solutions
+    profile.solver_config.optimize = optimize
+    profile.solver_config.simplify = simplify
+
+    # Configure collision margin for OMPL state validity check
+    # Use margin of 0.01 (10mm) - smaller than TrajOpt's margin (40mm) but enough
+    # for OMPL to find paths that are clearly collision-free
+    profile.contact_manager_config.default_margin = 0.01
+
+    # Add parallel RRTConnect planners (C++ default is 2)
+    profile.solver_config.clearPlanners()
+    for _ in range(num_planners):
+        cfg = RRTConnectConfigurator()
+        if planner_range > 0:
+            cfg.range = planner_range
+        profile.solver_config.addPlanner(cfg)
+
+    # Register under all requested names
+    profiles = ProfileDictionary()
+    for name in profile_names:
+        ProfileDictionary_addOMPLProfile(profiles, OMPL_DEFAULT_NAMESPACE, name, profile)
+
+    return profiles
+
+
+def create_ompl_planner_configurators(
+    planners: list[str] | None = None,
+    num_planners: int | None = None,
+    **kwargs: float | bool,
+) -> list:
+    """Create OMPL planner configurators with custom parameters.
+
+    Supports multiple planner types with their specific parameters:
+    - RRTConnect: range (default: 0.0 = auto)
+    - RRTstar: range, goal_bias (0.05), delay_collision_checking (True)
+    - SBL: range (default: 0.0 = auto)
+
+    Args:
+        planners: List of planner names (default: ["RRTConnect"])
+            Supported: "RRTConnect", "RRTstar", "SBL"
+        num_planners: Number of instances per planner type (default: 1)
+            Use multiple instances for parallel planning
+        **kwargs: Planner-specific parameters:
+            range: Step size for tree extension (0.0 = auto)
+            goal_bias: Probability of sampling goal (RRTstar only)
+            delay_collision_checking: Delay collision checks (RRTstar only)
+
+    Returns:
+        List of configured OMPLPlannerConfigurator instances
+
+    Example:
+        # Single RRTConnect with default settings
+        planners = create_ompl_planner_configurators()
+
+        # Multiple parallel RRTConnect planners
+        planners = create_ompl_planner_configurators(
+            planners=["RRTConnect"],
+            num_planners=4
+        )
+
+        # Mix of planner types with custom parameters
+        planners = create_ompl_planner_configurators(
+            planners=["RRTConnect", "RRTstar"],
+            num_planners=2,
+            range=0.1,
+            goal_bias=0.1,
+            delay_collision_checking=False
+        )
+    """
+    from tesseract_robotics.tesseract_motion_planners_ompl import (
+        RRTConnectConfigurator,
+        RRTstarConfigurator,
+        SBLConfigurator,
+    )
+
+    if planners is None:
+        planners = ["RRTConnect"]
+
+    if num_planners is None:
+        num_planners = 1
+
+    configurators = []
+
+    for planner_name in planners:
+        for _ in range(num_planners):
+            if planner_name == "RRTConnect":
+                cfg = RRTConnectConfigurator()
+                if "range" in kwargs:
+                    cfg.range = kwargs["range"]
+                configurators.append(cfg)
+
+            elif planner_name == "RRTstar":
+                cfg = RRTstarConfigurator()
+                if "range" in kwargs:
+                    cfg.range = kwargs["range"]
+                if "goal_bias" in kwargs:
+                    cfg.goal_bias = kwargs["goal_bias"]
+                if "delay_collision_checking" in kwargs:
+                    cfg.delay_collision_checking = kwargs["delay_collision_checking"]
+                configurators.append(cfg)
+
+            elif planner_name == "SBL":
+                cfg = SBLConfigurator()
+                if "range" in kwargs:
+                    cfg.range = kwargs["range"]
+                configurators.append(cfg)
+
+            else:
+                raise ValueError(
+                    f"Unknown planner: {planner_name}. Supported: RRTConnect, RRTstar, SBL"
+                )
+
+    return configurators
+
+
+DESCARTES_DEFAULT_NAMESPACE = "DescartesMotionPlannerTask"
+
+
+def create_descartes_default_profiles(
+    profile_names: list[str] | None = None,
+    enable_collision: bool | None = None,
+    enable_edge_collision: bool | None = None,
+    num_threads: int | None = None,
+    sample_axis: Any | None = None,
+    sample_resolution: float | None = None,
+    sample_min: float | None = None,
+    sample_max: float | None = None,
+    ik_solver: str | None = None,
+    use_redundant_joint_solutions: bool | None = None,
+    move_profile: Any | None = None,
+) -> ProfileDictionary:
+    """Create Descartes profiles with sensible defaults.
+
+    Descartes is a Cartesian path planner that uses a ladder graph approach
+    to find joint configurations for Cartesian waypoints. It samples IK solutions
+    at each waypoint and finds the minimum-cost path through the graph.
+
+    Creates both plan profiles (waypoint sampling) and solver profiles
+    (ladder graph solver configuration).
+
+    Profile Configuration:
+        Plan Profile (library defaults unless overridden):
+        - enable_collision: vertex (waypoint) collision checking — default on
+        - enable_edge_collision: edge (transition) collision checking — default off
+
+        Solver Profile:
+        - num_threads: Parallel graph solver threads (default: all CPUs)
+
+    Args:
+        profile_names: Profile names to register (default: DESCARTES_PROFILE_NAMES)
+            Relevant names: ["DEFAULT", "CARTESIAN", "RASTER"]
+            (Descartes doesn't apply to freespace tasks)
+        enable_collision: Vertex collision checking (default: library default, on)
+        enable_edge_collision: Edge collision checking (default: library default, off)
+            Warning: Significantly slower, use only if needed
+        num_threads: Number of threads for solver (default: CPU count)
+            More threads = faster graph search
+        sample_axis: Tool axis (3-vector, tool frame) to sample target rotation
+            about, for axis-symmetric processes (milling, welding, drilling).
+            Setting any `sample_*` argument switches the target pose from fixed
+            to sampled (`target_pose_fixed = False`).
+        sample_resolution: Rotation sampling step in radians (e.g. `radians(30)`)
+        sample_min: Rotation sampling range start in radians (library default: -pi)
+        sample_max: Rotation sampling range end in radians (library default: +pi)
+        ik_solver: Override the kinematic group's IK solver for sampling
+            (e.g. "OPWInvKin" — analytic solvers make the ladder graph fast)
+        use_redundant_joint_solutions: Also sample joint-redundant IK solutions
+            (e.g. wrist flips), enlarging the ladder graph
+        move_profile: Full custom `DescartesMoveProfileD` override — e.g. a Python
+            subclass with custom `createWaypointSampler` / `createEdgeEvaluator` /
+            `createStateEvaluator`. Mutually exclusive with the move-profile
+            arguments above; configure those on the custom profile instead.
+
+    Returns:
+        ProfileDictionary with configured Descartes profiles
+
+    Raises:
+        ValueError: `move_profile` combined with move-profile arguments.
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_descartes_default_profiles
+        )
+
+        # Standard configuration
+        profiles = create_descartes_default_profiles()
+
+        # Axis-symmetric tool: sample rotation about tool Z every 30 degrees
+        import math
+        profiles = create_descartes_default_profiles(
+            sample_axis=(0, 0, 1),
+            sample_resolution=math.radians(30),
+        )
+
+        # Custom Python move profile (see gh-83 subclassing surface)
+        profiles = create_descartes_default_profiles(move_profile=my_profile)
+    """
+    from tesseract_robotics.tesseract_motion_planners_descartes import (
+        DescartesDefaultPlanProfileD,
+        DescartesLadderGraphSolverProfileD,
+        cast_DescartesPlanProfileD,
+        cast_DescartesSolverProfileD,
+    )
+
+    if profile_names is None:
+        profile_names = DESCARTES_PROFILE_NAMES
+
+    if num_threads is None:
+        num_threads = _get_cpu_count()
+
+    if move_profile is not None:
+        passed = {
+            "enable_collision": enable_collision,
+            "enable_edge_collision": enable_edge_collision,
+            "sample_axis": sample_axis,
+            "sample_resolution": sample_resolution,
+            "sample_min": sample_min,
+            "sample_max": sample_max,
+            "ik_solver": ik_solver,
+            "use_redundant_joint_solutions": use_redundant_joint_solutions,
+        }
+        conflicting = [name for name, value in passed.items() if value is not None]
+        if conflicting:
+            raise ValueError(
+                f"move_profile is a full profile override — {conflicting} would be "
+                f"silently ignored; configure them on the custom profile instead"
+            )
+        plan_profile = move_profile
+    else:
+        plan_profile = DescartesDefaultPlanProfileD()
+        if enable_collision is not None:
+            plan_profile.enable_collision = enable_collision
+        if enable_edge_collision is not None:
+            plan_profile.enable_edge_collision = enable_edge_collision
+        if any(v is not None for v in (sample_axis, sample_resolution, sample_min, sample_max)):
+            import numpy as np
+
+            plan_profile.target_pose_fixed = False
+            if sample_axis is not None:
+                plan_profile.target_pose_sample_axis = np.asarray(sample_axis, dtype=float)
+            if sample_resolution is not None:
+                plan_profile.target_pose_sample_resolution = sample_resolution
+            if sample_min is not None:
+                plan_profile.target_pose_sample_min = sample_min
+            if sample_max is not None:
+                plan_profile.target_pose_sample_max = sample_max
+        if ik_solver is not None:
+            plan_profile.manipulator_ik_solver = ik_solver
+        if use_redundant_joint_solutions is not None:
+            plan_profile.use_redundant_joint_solutions = use_redundant_joint_solutions
+
+    base_plan = cast_DescartesPlanProfileD(plan_profile)
+
+    solver_profile = DescartesLadderGraphSolverProfileD()
+    solver_profile.num_threads = num_threads
+    base_solver = cast_DescartesSolverProfileD(solver_profile)
+
+    # Register under all requested names
+    profiles = ProfileDictionary()
+    for name in profile_names:
+        profiles.addProfile(DESCARTES_DEFAULT_NAMESPACE, name, base_plan)
+        profiles.addProfile(DESCARTES_DEFAULT_NAMESPACE, name, base_solver)
+
+    return profiles
+
+
+# =============================================================================
+# Pipeline-aware profile helpers
+# =============================================================================
+# These create profiles for complete pipelines (which use multiple planners)
+# Based on task_composer_plugins.yaml:
+#   FreespacePipeline → FreespaceTask → OMPL + TrajOpt
+#   CartesianPipeline → CartesianTask → Descartes + TrajOpt
+#   TrajOptPipeline → TrajOptTask → TrajOpt only
+
+
+def _add_trajopt_to_profiles(
+    profiles: ProfileDictionary,
+    profile_names: list[str] | None = None,
+) -> None:
+    """Add TrajOpt profiles to existing ProfileDictionary (internal helper)."""
+    from tesseract_robotics.tesseract_motion_planners_trajopt import (
+        ProfileDictionary_addTrajOptCompositeProfile,
+        ProfileDictionary_addTrajOptPlanProfile,
+    )
+
+    if profile_names is None:
+        profile_names = TRAJOPT_PROFILE_NAMES
+
+    composite, plan = _create_trajopt_profiles()
+
+    # Register under all requested names
+    for name in profile_names:
+        ProfileDictionary_addTrajOptCompositeProfile(
+            profiles, TRAJOPT_DEFAULT_NAMESPACE, name, composite
+        )
+        ProfileDictionary_addTrajOptPlanProfile(profiles, TRAJOPT_DEFAULT_NAMESPACE, name, plan)
+
+
+def create_freespace_pipeline_profiles(
+    profile_names: list[str] | None = None,
+    num_planners: int | None = None,
+    planning_time: float = 10.0,
+    optimize: bool = True,
+    max_solutions: int = 10,
+    planner_range: float = 0.0,
+) -> ProfileDictionary:
+    """Create profiles for FreespacePipeline (OMPL + TrajOpt).
+
+    The FreespacePipeline is a two-stage approach for collision-free motion:
+    1. OMPL finds a feasible collision-free path (fast, approximate)
+    2. TrajOpt optimizes the path for smoothness and exact collision margins
+
+    This combines the strengths of sampling-based planning (global search)
+    and optimization-based planning (solution quality).
+
+    Pipeline Flow:
+        Input: Start/goal joint states
+        -> OMPL: Parallel RRTConnect planners find collision-free path
+        -> TrajOpt: Optimize path for smoothness + collision margins
+        -> Output: Smooth, collision-free trajectory
+
+    Args:
+        profile_names: Profile names to register (default: STANDARD_PROFILE_NAMES)
+            Standard names: ["DEFAULT", "FREESPACE", "CARTESIAN", "RASTER", "UPRIGHT"]
+        num_planners: Number of parallel OMPL planners (default: CPU count)
+            More planners = higher success rate for difficult problems
+        planning_time: OMPL planning time in seconds (default: 10.0)
+            TrajOpt has no timeout (runs until convergence)
+        optimize: Continue planning to find better solutions (default: True)
+            If True, runs for full planning_time to improve solution quality
+            If False, returns first valid solution (faster, shows parallel speedup)
+        max_solutions: Stop early after finding this many solutions (default: 10)
+
+    Returns:
+        ProfileDictionary with both OMPL and TrajOpt profiles
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_freespace_pipeline_profiles
+        )
+
+        # Standard freespace planning
+        profiles = create_freespace_pipeline_profiles()
+
+        # Difficult environments: more time + parallelism
+        profiles = create_freespace_pipeline_profiles(
+            planning_time=10.0,
+            num_planners=16
+        )
+    """
+    if profile_names is None:
+        profile_names = STANDARD_PROFILE_NAMES
+
+    # Start with OMPL profiles
+    profiles = create_ompl_default_profiles(
+        profile_names=profile_names,
+        num_planners=num_planners,
+        planning_time=planning_time,
+        optimize=optimize,
+        max_solutions=max_solutions,
+        planner_range=planner_range,
+    )
+
+    # Add TrajOpt profiles for smoothing step
+    _add_trajopt_to_profiles(profiles, profile_names)
+
+    return profiles
+
+
+def _add_trajopt_ifopt_to_profiles(
+    profiles: ProfileDictionary,
+    profile_names: list[str] | None = None,
+) -> None:
+    """Add TrajOptIfopt profiles to existing ProfileDictionary (internal helper)."""
+    from tesseract_robotics.tesseract_motion_planners_trajopt_ifopt import (
+        ProfileDictionary_addTrajOptIfoptCompositeProfile,
+        ProfileDictionary_addTrajOptIfoptPlanProfile,
+        ProfileDictionary_addTrajOptIfoptSolverProfile,
+        TrajOptIfoptDefaultCompositeProfile,
+        TrajOptIfoptDefaultPlanProfile,
+        TrajOptIfoptOSQPSolverProfile,
+    )
+
+    if profile_names is None:
+        profile_names = TRAJOPT_PROFILE_NAMES
+
+    composite = TrajOptIfoptDefaultCompositeProfile()
+    composite.smooth_velocities = False
+    composite.smooth_accelerations = False
+    composite.smooth_jerks = False
+
+    plan = TrajOptIfoptDefaultPlanProfile()
+    plan.cartesian_cost_config.enabled = False
+    plan.cartesian_constraint_config.enabled = True
+    plan.joint_cost_config.enabled = False
+    plan.joint_constraint_config.enabled = True
+
+    solver = TrajOptIfoptOSQPSolverProfile()
+
+    for name in profile_names:
+        ProfileDictionary_addTrajOptIfoptCompositeProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, composite
+        )
+        ProfileDictionary_addTrajOptIfoptPlanProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, plan
+        )
+        ProfileDictionary_addTrajOptIfoptSolverProfile(
+            profiles, TRAJOPT_IFOPT_DEFAULT_NAMESPACE, name, solver
+        )
+
+
+def create_freespace_ifopt_pipeline_profiles(
+    profile_names: list[str] | None = None,
+    num_planners: int | None = None,
+    planning_time: float = 10.0,
+    optimize: bool = True,
+    max_solutions: int = 10,
+    planner_range: float = 0.0,
+) -> ProfileDictionary:
+    """Create profiles for FreespaceIfoptPipeline (OMPL + TrajOptIfopt).
+
+    Same two-stage approach as FreespacePipeline but uses TrajOptIfopt (SQP/OSQP)
+    instead of TrajOpt (SCO) for the optimization step.
+
+    Args:
+        profile_names: Profile names to register (default: STANDARD_PROFILE_NAMES)
+        num_planners: Number of parallel OMPL planners (default: min(4, CPU count))
+        planning_time: OMPL planning time in seconds (default: 10.0)
+        optimize: Continue planning to find better solutions (default: True)
+        max_solutions: Stop early after finding this many solutions (default: 10)
+
+    Returns:
+        ProfileDictionary with both OMPL and TrajOptIfopt profiles
+    """
+    if profile_names is None:
+        profile_names = STANDARD_PROFILE_NAMES
+
+    # Start with OMPL profiles
+    profiles = create_ompl_default_profiles(
+        profile_names=profile_names,
+        num_planners=num_planners,
+        planning_time=planning_time,
+        optimize=optimize,
+        max_solutions=max_solutions,
+        planner_range=planner_range,
+    )
+
+    # Add TrajOptIfopt profiles for smoothing step
+    _add_trajopt_ifopt_to_profiles(profiles, profile_names)
+
+    return profiles
+
+
+def create_cartesian_pipeline_profiles(
+    profile_names: list[str] | None = None,
+    num_threads: int | None = None,
+) -> ProfileDictionary:
+    """Create profiles for CartesianPipeline (Descartes + TrajOpt).
+
+    The CartesianPipeline handles motion with Cartesian (tool pose) constraints:
+    1. Descartes samples IK solutions and finds minimum-cost joint path
+    2. TrajOpt optimizes the path for smoothness and collision margins
+
+    This is ideal for tasks with tool orientation constraints (welding, painting,
+    milling, etc.) where the tool must follow a specific Cartesian path.
+
+    Pipeline Flow:
+        Input: Cartesian waypoints (tool poses)
+        -> Descartes: Sample IK solutions at each waypoint
+        -> Descartes: Find minimum-cost path through ladder graph
+        -> TrajOpt: Optimize path for smoothness + collision margins
+        -> Output: Smooth trajectory following Cartesian path
+
+    Args:
+        profile_names: Profile names to register (default: STANDARD_PROFILE_NAMES)
+            Standard names: ["DEFAULT", "FREESPACE", "CARTESIAN", "RASTER", "UPRIGHT"]
+        num_threads: Number of Descartes solver threads (default: CPU count)
+            More threads = faster graph search for long paths
+
+    Returns:
+        ProfileDictionary with both Descartes and TrajOpt profiles
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_cartesian_pipeline_profiles
+        )
+
+        # Standard Cartesian planning
+        profiles = create_cartesian_pipeline_profiles()
+
+        # Custom thread count for large raster paths
+        profiles = create_cartesian_pipeline_profiles(
+            num_threads=8
+        )
+    """
+    if profile_names is None:
+        profile_names = STANDARD_PROFILE_NAMES
+
+    # Start with Descartes profiles
+    profiles = create_descartes_default_profiles(
+        profile_names=profile_names,
+        num_threads=num_threads,
+    )
+
+    # Add TrajOpt profiles for optimization step
+    _add_trajopt_to_profiles(profiles, profile_names)
+
+    return profiles
+
+
+def create_descartes_pipeline_profiles(
+    profile_names: list[str] | None = None,
+    enable_collision: bool | None = None,
+    enable_edge_collision: bool | None = None,
+    num_threads: int | None = None,
+    sample_axis: Any | None = None,
+    sample_resolution: float | None = None,
+    sample_min: float | None = None,
+    sample_max: float | None = None,
+    ik_solver: str | None = None,
+    use_redundant_joint_solutions: bool | None = None,
+    move_profile: Any | None = None,
+) -> ProfileDictionary:
+    """Create profiles for the standalone Descartes pipelines.
+
+    Covers DescartesFPipeline / DescartesDPipeline and the NPC (no post check)
+    variants. Use these pipelines when the Descartes ladder-graph joint path is
+    the deliverable; for Descartes + TrajOpt refinement use CartesianPipeline
+    with `create_cartesian_pipeline_profiles`.
+
+    Pipeline Flow (F = forward search, D = backward search):
+        Input: Cartesian waypoints (tool poses)
+        -> MinLengthTask: densify the program to a minimum waypoint count
+        -> Descartes: sample IK per waypoint, search the ladder graph
+        -> DiscreteContactCheckTask: validate result (skipped in *NPC* variants)
+        -> IterativeSplineParameterizationTask: time parameterization
+        -> Output: timed joint trajectory following the Cartesian path
+
+    All arguments are forwarded to `create_descartes_default_profiles`; the
+    auxiliary tasks (min length, contact check, time parameterization) run on
+    their library default profiles.
+
+    Args:
+        profile_names: Profile names to register (default: DESCARTES_PROFILE_NAMES)
+        enable_collision: Vertex collision checking (default: library default, on)
+        enable_edge_collision: Edge collision checking (default: library default, off)
+        num_threads: Ladder graph solver threads (default: CPU count)
+        sample_axis: Tool axis to sample target rotation about (axis-symmetric tools)
+        sample_resolution: Rotation sampling step in radians
+        sample_min: Rotation sampling range start in radians
+        sample_max: Rotation sampling range end in radians
+        ik_solver: Override the kinematic group's IK solver for sampling
+        use_redundant_joint_solutions: Also sample joint-redundant IK solutions
+        move_profile: Full custom `DescartesMoveProfileD` override (mutually
+            exclusive with the move-profile arguments above)
+
+    Returns:
+        ProfileDictionary with configured Descartes profiles
+
+    Usage:
+        from tesseract_robotics.planning import TaskComposer
+        from tesseract_robotics.planning.profiles import (
+            create_descartes_pipeline_profiles
+        )
+
+        profiles = create_descartes_pipeline_profiles()
+        result = composer.plan(robot, program,
+                               pipeline="DescartesFPipeline",
+                               profiles=profiles)
+    """
+    return create_descartes_default_profiles(
+        profile_names=profile_names,
+        enable_collision=enable_collision,
+        enable_edge_collision=enable_edge_collision,
+        num_threads=num_threads,
+        sample_axis=sample_axis,
+        sample_resolution=sample_resolution,
+        sample_min=sample_min,
+        sample_max=sample_max,
+        ik_solver=ik_solver,
+        use_redundant_joint_solutions=use_redundant_joint_solutions,
+        move_profile=move_profile,
+    )
+
+
+# =============================================================================
+# Time Parameterization Helpers
+# =============================================================================
+
+
+def create_time_optimal_parameterization(
+    path_tolerance: float = 0.1,
+    min_angle_change: float = 0.001,
+) -> Any:
+    """Create Time-Optimal Trajectory Generation (TOTG) parameterization.
+
+    TOTG finds the time-optimal trajectory that respects velocity, acceleration,
+    and jerk limits. It uses a numerical integration approach to find the fastest
+    trajectory along a given geometric path.
+
+    Args:
+        path_tolerance: Path deviation tolerance in radians (default: 0.1)
+            Controls how closely the time-parameterized trajectory follows
+            the original path. Smaller values = closer following but slower.
+        min_angle_change: Minimum angle change in radians (default: 0.001)
+            Used to detect linear segments vs curves. Smaller values = more
+            sensitive curve detection.
+
+    Returns:
+        TimeOptimalTrajectoryGeneration instance
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_time_optimal_parameterization
+        )
+        from tesseract_robotics.tesseract_time_parameterization import (
+            InstructionsTrajectory
+        )
+
+        # Create time parameterization
+        totg = create_time_optimal_parameterization(path_tolerance=0.05)
+
+        # Apply to trajectory
+        trajectory = InstructionsTrajectory(program)
+        success = totg.compute(
+            trajectory,
+            velocity_limits,
+            acceleration_limits,
+            jerk_limits
+        )
+
+    Reference:
+        Kunz & Stilman, "Time-Optimal Trajectory Generation for Path Following
+        with Bounded Acceleration and Velocity", RSS 2012
+    """
+    from tesseract_robotics.tesseract_time_parameterization import (
+        TimeOptimalTrajectoryGeneration,
+    )
+
+    # 0.33 API: path_tolerance and min_angle_change are now in profile
+    # Constructor only takes name
+    _ = path_tolerance, min_angle_change  # Acknowledge but ignore for now
+    return TimeOptimalTrajectoryGeneration()
+
+
+def create_iterative_spline_parameterization(
+    add_points: bool = True,
+) -> Any:
+    """Create Iterative Spline Parameterization (ISP).
+
+    ISP iteratively fits a spline to the trajectory while respecting velocity,
+    acceleration, and jerk limits. Generally faster than TOTG but may produce
+    slower trajectories.
+
+    Args:
+        add_points: Whether to add intermediate points (default: True)
+            If True, adds waypoints between existing ones to better satisfy
+            constraints. If False, only uses existing waypoints (faster but
+            may violate limits).
+
+    Returns:
+        IterativeSplineParameterization instance
+
+    Usage:
+        from tesseract_robotics.planning.profiles import (
+            create_iterative_spline_parameterization
+        )
+        from tesseract_robotics.tesseract_time_parameterization import (
+            InstructionsTrajectory
+        )
+
+        # Create time parameterization
+        isp = create_iterative_spline_parameterization(add_points=True)
+
+        # Apply to trajectory
+        trajectory = InstructionsTrajectory(program)
+        success = isp.compute(
+            trajectory,
+            velocity_limits,
+            acceleration_limits,
+            jerk_limits
+        )
+
+    Note:
+        ISP is typically faster to compute than TOTG, but TOTG produces
+        time-optimal trajectories. Use ISP when computation speed matters
+        more than trajectory time.
+    """
+    from tesseract_robotics.tesseract_time_parameterization import (
+        IterativeSplineParameterization,
+    )
+
+    # 0.33 API: add_points is now in profile, constructor only takes name
+    _ = add_points  # Acknowledge but ignore for now
+    return IterativeSplineParameterization()

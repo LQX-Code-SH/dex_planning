@@ -1,0 +1,200 @@
+import os
+
+import numpy as np
+
+from tesseract_robotics.tesseract_common import FilesystemPath, ManipulatorInfo
+from tesseract_robotics.tesseract_environment import Environment
+from tesseract_robotics.tesseract_kinematics import (
+    KinGroupIKInput,
+    KinGroupIKInputs,
+)
+
+from ..tesseract_support_resource_locator import TesseractSupportResourceLocator
+
+
+def get_environment():
+    env = Environment()
+    locator = TesseractSupportResourceLocator()
+    tesseract_support = os.environ["TESSERACT_SUPPORT_DIR"]
+    urdf_path = FilesystemPath(os.path.join(tesseract_support, "urdf/abb_irb2400.urdf"))
+    srdf_path = FilesystemPath(os.path.join(tesseract_support, "urdf/abb_irb2400.srdf"))
+    assert env.init(urdf_path, srdf_path, locator)
+    manip_info = ManipulatorInfo()
+    manip_info.manipulator = "manipulator"
+    manip_info.tcp_frame = "tool0"
+    manip_info.working_frame = "base_link"
+    joint_names = list(env.getJointGroup("manipulator").getJointNames())
+
+    # Return locator to keep it alive (prevent segfault on gc)
+    return env, manip_info, joint_names, locator
+
+
+def test_get_environment():
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+    # Explicit cleanup
+    del joint_names, manip_info, env, locator
+    gc.collect()
+
+
+def test_kinematic_group():
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+
+    kin_group = env.getKinematicGroup(manip_info.manipulator)
+
+    joint_vals = np.ones((6,), dtype=np.float64) * 0.1
+    pose_map = kin_group.calcFwdKin(joint_vals)
+    pose = pose_map[manip_info.tcp_frame]
+
+    ik = KinGroupIKInput()
+    ik.pose = pose
+    ik.tip_link_name = "tool0"
+    ik.working_frame = "base_link"
+    iks = KinGroupIKInputs()
+    iks.append(ik)
+
+    invkin1 = kin_group.calcInvKin(iks, joint_vals * 0.1)
+    invkin = invkin1[0]
+
+    np.testing.assert_allclose(invkin.flatten(), joint_vals)
+
+    # Explicit cleanup to prevent segfault from gc order issues
+    del invkin, invkin1, iks, ik, pose, pose_map, kin_group
+    del joint_names, manip_info, env, locator
+    gc.collect()
+
+
+def test_kinematic_info():
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+
+    assert hasattr(env, "getKinematicsInformation"), "getKinematicsInformation not yet bound"
+
+    kin_info = env.getKinematicsInformation()
+
+    assert list(kin_info.joint_groups) == []
+    assert list(kin_info.link_groups) == []
+
+    # Explicit cleanup
+    del kin_info, joint_names, manip_info, env, locator
+    gc.collect()
+
+
+def test_kinematic_group_lifetime_after_setstate():
+    """Regression test for kinematic group lifetime after setState.
+
+    Previously, getKinematicGroup returned a dangling reference because the
+    unique_ptr was destroyed at the end of the lambda. This caused segfaults
+    when calling methods on the kinematic group after env.setState().
+
+    See: KINEMATICGROUP_IK_API_ISSUE.md
+    """
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+
+    # Get kinematic group BEFORE setState
+    kin_group = env.getKinematicGroup(manip_info.manipulator)
+
+    # Verify it works initially
+    base_link = kin_group.getBaseLinkName()
+    assert base_link == "base_link"
+
+    # Call setState - this used to invalidate the kinematic group reference
+    test_joints = np.array([0.5, 0.3, 0.2, 0.1, 0.4, 0.2])
+    env.setState(joint_names, test_joints)
+
+    # This used to segfault before the fix
+    base_link_after = kin_group.getBaseLinkName()
+    assert base_link_after == "base_link"
+
+    # FK should still work too
+    fk_result = kin_group.calcFwdKin(test_joints)
+    assert "tool0" in fk_result
+
+    # Cleanup
+    del fk_result, kin_group
+    del joint_names, manip_info, env, locator
+    gc.collect()
+
+
+def test_tesseract_redundant_solutions_tesseract_function():
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+
+    kin_group = env.getKinematicGroup(manip_info.manipulator)
+
+    limits = kin_group.getLimits()
+    redundancy_indices = list(kin_group.getRedundancyCapableJointIndices())
+
+    import tesseract_robotics.tesseract_kinematics as tes_com
+
+    sol = np.ones(6) * np.deg2rad(5)  # 1D array, not 2D
+    redun_sol = tes_com.getRedundantSolutions(sol, limits.joint_limits, redundancy_indices)
+
+    assert len(redun_sol) == 2
+
+    assert np.allclose(
+        redun_sol[0].flatten(),
+        np.array([0.08726646, 0.08726646, 0.08726646, 0.08726646, 0.08726646, -6.19591884]),
+    ) or np.allclose(
+        redun_sol[0].flatten(),
+        np.array([0.08726646, 0.08726646, 0.08726646, 0.08726646, 0.08726646, 6.19591884]),
+    )
+
+    # Explicit cleanup
+    del redun_sol, sol, redundancy_indices, limits, kin_group
+    del joint_names, manip_info, env, locator
+    gc.collect()
+
+
+def test_kinematic_group_single_ik_input():
+    """Test calcInvKin with single KinGroupIKInput (not collection).
+
+    This matches the API usage in tesseract_qt_py's test_upstream_api_issues.py
+    where single IK targets are solved directly.
+    """
+    import gc
+
+    env, manip_info, joint_names, locator = get_environment()
+
+    kin_group = env.getKinematicGroup(manip_info.manipulator)
+
+    # Create a target pose from FK of a known configuration
+    test_joints = np.array([0.1, 0.2, 0.1, 0.1, 0.1, 0.1])
+    fk_result = kin_group.calcFwdKin(test_joints)
+    target_pose = fk_result[manip_info.tcp_frame]
+
+    # Create single IK input (not collection)
+    ik_input = KinGroupIKInput()
+    ik_input.pose = target_pose
+    ik_input.tip_link_name = manip_info.tcp_frame
+    ik_input.working_frame = manip_info.working_frame
+
+    # Solve with single input - this is the API tesseract_qt_py uses
+    seed = np.zeros(6)
+    solutions = kin_group.calcInvKin(ik_input, seed)
+
+    assert len(solutions) >= 1, "Single IK input should return at least one solution"
+
+    # Verify solution reaches target
+    sol_fk = kin_group.calcFwdKin(solutions[0])
+    sol_pose = sol_fk[manip_info.tcp_frame]
+
+    # Poses should be close (IK solution should reach target)
+    np.testing.assert_allclose(
+        sol_pose.matrix[:3, 3],
+        target_pose.matrix[:3, 3],
+        atol=1e-3,
+        err_msg="IK solution should reach target position",
+    )
+
+    # Cleanup
+    del solutions, sol_fk, sol_pose, seed, ik_input, target_pose, fk_result
+    del kin_group, joint_names, manip_info, env, locator
+    gc.collect()

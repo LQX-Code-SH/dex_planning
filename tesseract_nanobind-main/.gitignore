@@ -1,0 +1,46 @@
+# Build artifacts
+ws/
+install/
+log/
+build.log
+build.pid
+setup.log
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.so
+.env
+
+# testing
+.pytest_cache/
+
+# profiling
+*.trace/
+
+# OS
+.DS_Store
+
+# Sphinx docs
+docs/_build/
+docs/readme.md
+wheelhouse/
+src/tesseract_robotics/.cache/
+site/
+.pixi/
+pixi.lock
+.testmondata
+
+# Local-only design docs and plans; never commit
+docs/superpowers/
+docs/plans/
+AGENTS.md

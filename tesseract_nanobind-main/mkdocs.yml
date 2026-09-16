@@ -1,0 +1,205 @@
+site_name: tesseract_robotics
+site_description: Python bindings for Tesseract Motion Planning Framework
+site_url: https://tesseract-robotics.github.io/tesseract_nanobind/
+repo_url: https://github.com/tesseract-robotics/tesseract_nanobind
+repo_name: tesseract-robotics/tesseract_nanobind
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - announce.dismiss
+    - toc.follow
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - exclude:
+      glob:
+        - QUICKSTART.md
+        - superpowers/**
+        - plans/**
+  - mkdocstrings:
+      enable_inventory: false
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            heading_level: 2
+            members_order: source
+            docstring_style: google
+            show_if_no_docstring: true
+            show_signature: true
+            show_signature_annotations: true
+            separate_signature: true
+
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+  # PyMdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      auto_title: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: tesseract-robotics
+      repo: tesseract_nanobind
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path: ['.', 'docs']
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quickstart: getting-started/quickstart.md
+    - Core Concepts: getting-started/concepts.md
+  - User Guide:
+    - Environment & Scene Graph: user-guide/environment.md
+    - Kinematics: user-guide/kinematics.md
+    - Collision Detection: user-guide/collision.md
+    - Motion Planning: user-guide/planning.md
+    - Task Composer: user-guide/task-composer.md
+    - Serialization: user-guide/serialization.md
+    - Low-Level SQP API: user-guide/low-level-sqp.md
+    - Viewer: user-guide/viewer.md
+  - Examples:
+    - examples/index.md
+    - Basic Examples: examples/basic.md
+    - Planning Examples: examples/planning.md
+    - Online Planning: examples/online-planning.md
+  - API Reference:
+    - api/index.md
+    - High-Level:
+      - tesseract_robotics.planning: api/planning.md
+    - Core Modules:
+      - tesseract_robotics.tesseract_common: api/tesseract_common.md
+      - tesseract_robotics.tesseract_geometry: api/tesseract_geometry.md
+      - tesseract_robotics.tesseract_scene_graph: api/tesseract_scene_graph.md
+      - tesseract_robotics.tesseract_environment: api/tesseract_environment.md
+      - tesseract_robotics.tesseract_collision: api/tesseract_collision.md
+      - tesseract_robotics.tesseract_kinematics: api/tesseract_kinematics.md
+      - tesseract_robotics.tesseract_serialization: api/tesseract_serialization.md
+    - Planning Modules:
+      - tesseract_robotics.tesseract_command_language: api/tesseract_command_language.md
+      - tesseract_robotics.tesseract_motion_planners: api/tesseract_motion_planners.md
+      - tesseract_robotics.tesseract_motion_planners_ompl: api/tesseract_motion_planners_ompl.md
+      - tesseract_robotics.tesseract_motion_planners_trajopt: api/tesseract_motion_planners_trajopt.md
+      - tesseract_robotics.tesseract_motion_planners_descartes: api/tesseract_motion_planners_descartes.md
+      - tesseract_robotics.tesseract_motion_planners_simple: api/tesseract_motion_planners_simple.md
+      - tesseract_robotics.tesseract_task_composer: api/tesseract_task_composer.md
+    - SQP Modules:
+      - tesseract_robotics.trajopt_ifopt: api/trajopt_ifopt.md
+      - tesseract_robotics.trajopt_sqp: api/trajopt_sqp.md
+  - Changelog: CHANGELOG.md
+  - Migration Guides:
+    - "0.33 → 0.34": changes.md
+  - Developer:
+    - developer/index.md
+    - Program Emitters: developer/emitters.md
+    - SWIG to Nanobind Migration: developer/migration.md
+    - TrajOpt-Ifopt Constraints: developer/trajopt_ifopt_missing_constraints.md
+    - Windows Wheel Gotchas: developer/windows-wheels.md
+    - macOS Wheel Gotchas: developer/macos-wheels.md
+    - Linux Wheel Gotchas: developer/linux-wheels.md
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/tesseract-robotics
+      name: tesseract-robotics on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/tesseract-robotics/
+      name: tesseract-robotics on PyPI
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+copyright: Copyright &copy; 2024-2026 Tesseract Robotics
