@@ -8,8 +8,7 @@ description:
   # 四件套路径相对 description root（包含 tienkung_dex/ 描述树的目录；
   # 定位顺序：显式参数 > TIENKUNG_PLANNING_DESCRIPTION_ROOT > 包内上溯推断）。
   # N10 实测：hand.urdf 151 处 file://（全部为网格）、srdf 2 处（插件 yaml，
-  # 两个 yaml 文件本身不含路径）；tienkung_dex.urdf 的 115 处不在加载路径上，
-  # 重写器不处理。meshes_hand/ 无任何引用（归属待定，封装方案 §4.2 备忘）。
+  # 两个 yaml 文件本身不含路径）。
   urdf: tienkung_dex/urdf/tienkung_dex.hand.urdf
   srdf: tienkung_dex/urdf/tienkung_dex.srdf
   kinematics_yaml: tienkung_dex/urdf/tienkung_dex_plugins.yaml
