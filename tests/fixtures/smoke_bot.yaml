@@ -1,0 +1,11 @@
+# 无 mesh 冒烟机型（CI §8.4 第 4 项：管线骨架）
+schema: {major: 1, minor: 0}
+robot: smoke_bot
+description:
+  urdf: smoke_bot/urdf/smoke_bot.urdf
+  srdf: smoke_bot/urdf/smoke_bot.srdf
+  kinematics_yaml: smoke_bot/urdf/smoke_bot_plugins.yaml
+  contact_manager_yaml: smoke_bot/urdf/smoke_contact_plugins.yaml
+  mesh_root: smoke_bot/urdf   # 无网格；仅声明存在
+groups: {arm: "arm"}
+fingers: {}

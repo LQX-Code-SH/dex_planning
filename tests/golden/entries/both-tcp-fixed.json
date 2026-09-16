@@ -1,0 +1,92 @@
+{
+ "thresholds": {
+  "perr_mm": 0.1,
+  "offplane_mm": 0.5,
+  "secondary_mm": 0.5
+ },
+ "acm_hash": "8fd20010f00238fc2befde1ac9e69b63d807f8a64c324e360529d74f02d289d1",
+ "precheck": "pass",
+ "circle": {
+  "right": {
+   "perr_mm": 0.0042157578038868925,
+   "offplane_mm": 0.002357939323960334,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.30024222231956665,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0037451091787074962,
+   "offplane_mm": 0.002105668837265595,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.2937952153185033,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 1.324
+ },
+ "arc": {
+  "right": {
+   "perr_mm": 0.0041438262229918765,
+   "offplane_mm": 0.001298334033228432,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.30029677212652084,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.004546552328974415,
+   "offplane_mm": 0.0010755550949592685,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.294071318575301,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 1.958,
+  "transition_frames": 33
+ },
+ "triangle": {
+  "right": {
+   "perr_mm": 0.003851963458449374,
+   "offplane_mm": 0.001564608152343494,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.3651524112866289,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.004546111076939155,
+   "offplane_mm": 0.0017482354270348388,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.3024362148343429,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.547,
+  "transition_frames": 33
+ },
+ "line": {
+  "right": {
+   "perr_mm": 0.004326692012486554,
+   "offplane_mm": 0.0005044188768899005,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.4561867847199401,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.00439154632168071,
+   "offplane_mm": 0.0010076773243605786,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.4868687154479343,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.528,
+  "transition_frames": 33
+ },
+ "label": "both-tcp-fixed",
+ "result": "ALL PASS",
+ "nanobind": "0.35.0.7",
+ "numpy": "1.26.4"
+}

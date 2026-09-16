@@ -1,0 +1,49 @@
+# 天工 Dex RobotProfile（封装方案 §4.2，实施计划步 4）
+# 机器人的静态事实全部在此：描述四件套、组名模板、手指耦合系数、tcp 标定。
+# 字段集即契约：新增/删改字段须走评审，不得静默加键（同 ModeConfig，N1）。
+schema: {major: 1, minor: 0}
+robot: tienkung_dex
+
+description:
+  # 四件套路径相对 description root（包含 tienkung_dex/ 描述树的目录；
+  # 定位顺序：显式参数 > TIENKUNG_PLANNING_DESCRIPTION_ROOT > 包内上溯推断）。
+  # N10 实测：hand.urdf 151 处 file://（全部为网格）、srdf 2 处（插件 yaml，
+  # 两个 yaml 文件本身不含路径）；tienkung_dex.urdf 的 115 处不在加载路径上，
+  # 重写器不处理。meshes_hand/ 无任何引用（归属待定，封装方案 §4.2 备忘）。
+  urdf: tienkung_dex/urdf/tienkung_dex.hand.urdf
+  srdf: tienkung_dex/urdf/tienkung_dex.srdf
+  kinematics_yaml: tienkung_dex/urdf/tienkung_dex_plugins.yaml
+  contact_manager_yaml: tienkung_dex/urdf/contact_manager_plugins.yaml
+  mesh_root: tienkung_dex/meshes
+  expected_groups: 22        # srdf 组数 fail-fast 校验
+
+groups:
+  arm: "{side}_arm"
+  tcp: "{side}_tcp_link"
+  full: "{side}_arm_{finger}"
+  waist: "{side}_arm_waist_{finger}"
+
+fingers:
+  # mult = distal/proximal（URDF <mimic> 系数），upper = proximal 限位 (rad)。
+  # 与 hand_bridge._FOLLOWER / joint_state_frontend._FOLLOWER 同一套系数；
+  # thumb 的 metacarpal（thumb_rot）无耦合、是独立关节，规划时固定在 0。
+  index:  {mult: 1.155, upper: 1.41}
+  middle: {mult: 1.155, upper: 1.41}
+  ring:   {mult: 1.155, upper: 1.41}
+  pinky:  {mult: 1.155, upper: 1.41}
+  thumb:  {mult: 1.0, upper: 1.03, mc_joint: "{side}_thumb_metacarpal_joint"}
+
+calibration:
+  # 右臂 tcp 模式的路径中心与固定末端姿态（pelvis 系）及落在 tcp 路径起点上
+  # 的起始臂关节位姿——整套标定的基准；左臂全部量由它镜像得出（代码里的
+  # MIRROR 矩阵，find_seed()），full/fixed 模式的中心/姿态由种子位姿 FK 得出。
+  right:
+    center: [0.12739162693933648, -0.33978233066150054, 0.04771404763425319]
+    rotation:
+      - [0.638872841814646, 0.4856700875016278, -0.5966289115504204]
+      - [-0.7527020228476247, 0.23432822811083073, -0.6152478738781081]
+      - [-0.15900049305826772, 0.8421489462183037, 0.515270798309615]
+    seed_arm: [0.9848669018707299, -0.864589217331047, -0.3953022998890723,
+               -2.133457534342359, -2.4875267243865338, 0.5466924922330669,
+               -0.2419232346704452]
+  left: {mirror_of: right}   # 声明性记录：镜像换算逻辑在代码，不在 profile

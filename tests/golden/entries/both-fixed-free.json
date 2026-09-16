@@ -1,0 +1,96 @@
+{
+ "thresholds": {
+  "perr_mm": 0.1,
+  "offplane_mm": 0.5,
+  "secondary_mm": 0.5
+ },
+ "acm_hash": "a6ed0fbb6717b56ac48406a46f8717a181378c8918f4eb92fb764652e9365961",
+ "precheck": "pass",
+ "circle": {
+  "right": {
+   "perr_mm": 0.0031131667081871085,
+   "offplane_mm": 6.815099198864694e-05,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.0,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0018641631834603592,
+   "offplane_mm": 0.0008356509978435511,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.07262221684948189,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 4.163
+ },
+ "arc": {
+  "right": {
+   "perr_mm": 0.00017992176430456624,
+   "offplane_mm": 2.4619353833355007e-05,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.14171573789976533,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0005867200702002625,
+   "offplane_mm": 0.0002141010941869581,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.07281982344512983,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 2.537,
+  "transition_frames": 33
+ },
+ "triangle": {
+  "right": {
+   "perr_mm": 0.00028562527537008477,
+   "offplane_mm": 3.270871087868166e-05,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.02430736369042985,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0014010886382923207,
+   "offplane_mm": 0.0005926802545408449,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.081899854706184,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 1.135,
+  "transition_frames": 33
+ },
+ "line": {
+  "right": {
+   "perr_mm": 5.4900210477685844e-05,
+   "offplane_mm": 2.734122706016251e-06,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.1637660453317325,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.003206809419221393,
+   "offplane_mm": 0.0022982802563575877,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.1637660453317325,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 1.733,
+  "transition_frames": 33
+ },
+ "waist_span_rad": {
+  "right": 0.4363323129985824,
+  "left": 0.2725662676668499
+ },
+ "label": "both-fixed-free",
+ "result": "ALL PASS",
+ "nanobind": "0.35.0.7",
+ "numpy": "1.26.4"
+}

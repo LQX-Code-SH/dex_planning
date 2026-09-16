@@ -16,9 +16,11 @@ fingers = sys.argv[4] if len(sys.argv) > 4 else None
 _argv = ["reg", "--arm", arm, "--mode", mode, "--waist", waist]
 if fingers:
     _argv += ["--fingers", fingers]
-sys.argv = _argv
 import numpy as np
 import circle_planning_7axis as m
+
+# 步 0.5：真 API 配置注入，不再篡改 sys.argv（import 无副作用）
+m.configure(_argv[1:])
 
 robot = m.Robot.from_files(m.URDF, m.SRDF)
 cfgs = {}
@@ -28,12 +30,7 @@ for side in m.SIDES:
         cfg = m.build_cfg_multi(robot, side, m.FINGER_LIST, m.MODE, seed)
     else:
         cfg = m.build_cfg(robot, side, m.FINGER_NAME, m.MODE, seed)
-    if "limits" not in cfg:
-        limits = robot.get_joint_limits(cfg["group"])
-        cfg["limits"] = {
-            "lo": np.array([limits[j]["lower"] for j in cfg["joint_names"]]),
-            "hi": np.array([limits[j]["upper"] for j in cfg["joint_names"]]),
-        }
+    # 限位已由 build_cfg 共享装配统一填充（_finalize_limits）
     if m.MODE != "tcp":
         cfg["other_pos"] = {**cfg.get("other_pos", {}), **m.display_other_pos(side, m.FINGER_LIST)}
     cfgs[side] = cfg
@@ -103,8 +100,9 @@ for shape in m.SHAPES:
                 ok = False
         results[side] = (points, Q, ts)
         if (side == "right" and len(m.SIDES) == 2
-                and "set_frozen_waist" in cfgs["left"]):
-            cfgs["left"]["set_frozen_waist"](m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)])
+                and cfgs["left"].frozen_waist_setter is not None):
+            cfgs["left"].frozen_waist_setter(
+                m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)])
     if len(results) == len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs, results):
         print(f"FAIL {shape}: 双臂碰撞")
         ok = False

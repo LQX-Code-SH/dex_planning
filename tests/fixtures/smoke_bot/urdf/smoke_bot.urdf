@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<robot name="smoke_bot" tesseract:make_convex="true">
+  <link name="base_link"/>
+  <link name="link1"/>
+  <link name="link2"/>
+  <joint name="j1" type="revolute">
+    <parent link="base_link"/><child link="link1"/>
+    <origin xyz="0 0 0.1"/><axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+  <joint name="j2" type="revolute">
+    <parent link="link1"/><child link="link2"/>
+    <origin xyz="0 0 0.3"/><axis xyz="0 1 0"/>
+    <limit lower="-3.14" upper="3.14" effort="1" velocity="1"/>
+  </joint>
+</robot>

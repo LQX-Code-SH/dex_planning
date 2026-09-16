@@ -63,12 +63,11 @@
 import argparse
 import itertools
 import math
+import os
+import sys
 import xml.etree.ElementTree as ET
 
 import numpy as np
-
-from tesseract_robotics.planning import Robot
-from tesseract_robotics.planning.transforms import Pose
 
 # ROS 2（消息类不含 C 扩展，可以放心放模块顶层；rclpy 的 C 扩展在 tesseract 之后导入）
 import rclpy
@@ -80,8 +79,24 @@ from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
 
 # ---------------------------------------------------------------- 参数
-URDF = "/home/qingxiangliu/work/dex_planning/tienkung_dex/urdf/tienkung_dex.hand.urdf"
-SRDF = "/home/qingxiangliu/work/dex_planning/tienkung_dex/urdf/tienkung_dex.srdf"
+# 描述文件（步 4：RobotProfile → 四件套路径重写）。逃生舱：同时设置
+# TIENKUNG_PLANNING_URDF/SRDF 时跳过 profile，直接使用给定文件。
+_REPO = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_REPO, "src"))
+from tienkung_planning.core.profile import load_profile, resolve_description  # noqa: E402
+
+_PROFILE = load_profile(os.environ.get("TIENKUNG_PLANNING_PROFILE", "tienkung_dex"))
+if os.environ.get("TIENKUNG_PLANNING_URDF") and os.environ.get("TIENKUNG_PLANNING_SRDF"):
+    URDF = os.environ["TIENKUNG_PLANNING_URDF"]     # 逃生舱：不经重写
+    SRDF = os.environ["TIENKUNG_PLANNING_SRDF"]
+else:
+    URDF, SRDF = resolve_description(_PROFILE)
+
+# L1 防腐层（实施计划步 1）：tesseract 绑定细节只在 tess.py，本模块经它取用
+sys.path.insert(0, os.path.join(_REPO, "src"))
+from tienkung_planning.core import tess
+from tienkung_planning.core.tess import Pose, Robot   # noqa: E402  对象模型再导出
+from tienkung_planning.core.mode import ModeConfig    # noqa: E402  L2 模式契约
 
 FRAME = "pelvis"          # tesseract 的 KinematicGroup 把 base 上溯到机器人根链接
 
@@ -93,17 +108,13 @@ START_DIR = np.array([0.0, 1.0, 0.0])
 PLANE_NORMAL = np.array([1.0, 0.0, 0.0])
 
 # 右臂 tcp 模式（原 demo）的路径中心与固定末端姿态（pelvis 系），以及落在 tcp 路径
-# 起点上的起始关节位姿。这是整套标定的基准：左臂全部量由它镜像得出，full/fixed
-# 模式的中心/姿态改由种子位姿的指尖 FK 得出，保证起点本身可达。
-CENTER_TCP = np.array([0.12739162693933648, -0.33978233066150054, 0.04771404763425319])
-ROTATION_TCP = np.array([
-    [0.638872841814646, 0.4856700875016278, -0.5966289115504204],
-    [-0.7527020228476247, 0.23432822811083073, -0.6152478738781081],
-    [-0.15900049305826772, 0.8421489462183037, 0.515270798309615],
-])
-SEED_ARM = np.array([0.9848669018707299, -0.864589217331047, -0.3953022998890723,
-                     -2.133457534342359, -2.4875267243865338, 0.5466924922330669,
-                     -0.2419232346704452])
+# 起点上的起始关节位姿——RobotProfile 标定段提供（步 4）。这是整套标定的基准：
+# 左臂全部量由它镜像得出，full/fixed 模式的中心/姿态改由种子位姿的指尖 FK 得出，
+# 保证起点本身可达。
+_CALIB = _PROFILE["calibration"]["right"]
+CENTER_TCP = np.array(_CALIB["center"])
+ROTATION_TCP = np.array(_CALIB["rotation"])
+SEED_ARM = np.array(_CALIB["seed_arm"])
 
 # 左右镜像：位置 p' = M·p，旋转 R' = M·R·M（机器人左右对称，左臂 = 右臂镜像）
 MIRROR = np.diag([1.0, -1.0, 1.0])
@@ -111,21 +122,15 @@ CENTER_TCP_L = MIRROR @ CENTER_TCP
 ROTATION_TCP_L = MIRROR @ ROTATION_TCP @ MIRROR
 
 # ---------------------------------------------------------------- 侧 / 手指表
-# 臂组名是 SRDF 里定义的 chain 组；全链组 {side}_arm_{finger} 的插件配置见
-# tienkung_dex_plugins.yaml。左臂种子不用手工标定，见 find_seed()。
-ARM_GROUP = {"right": "right_arm", "left": "left_arm"}
-TCP_LINK = {"right": "right_tcp_link", "left": "left_tcp_link"}
+# 组名模板与手指耦合表由 RobotProfile 提供（步 4）。臂组名是 SRDF 里定义的
+# chain 组；全链组 {side}_arm_{finger} 的插件配置见 tienkung_dex_plugins.yaml。
+# 左臂种子不用手工标定，见 find_seed()。
+ARM_GROUP = {s: _PROFILE["groups"]["arm"].format(side=s) for s in ("right", "left")}
+TCP_LINK = {s: _PROFILE["groups"]["tcp"].format(side=s) for s in ("right", "left")}
 
-# 手指耦合表（与 hand_bridge._FOLLOWER / joint_state_frontend._FOLLOWER 同一套系数）：
-# mult = distal/proximal（URDF <mimic multiplier>），upper = proximal 限位 (rad)。
+# mult = distal/proximal（URDF <mimic multiplier>），upper = proximal 限位 (rad)；
 # thumb 的 metacarpal（thumb_rot）无耦合、是独立关节，规划时固定在 0。
-FINGERS = {
-    "index":  dict(mult=1.155, upper=1.41),
-    "middle": dict(mult=1.155, upper=1.41),
-    "ring":   dict(mult=1.155, upper=1.41),
-    "pinky":  dict(mult=1.155, upper=1.41),
-    "thumb":  dict(mult=1.0,   upper=1.03, mc_joint="{side}_thumb_metacarpal_joint"),
-}
+FINGERS = {k: dict(v) for k, v in _PROFILE["fingers"].items()}
 
 
 def prox_joint(side, finger):
@@ -141,12 +146,12 @@ def tip_link(side, finger):
 
 
 def full_group(side, finger):
-    return f"{side}_arm_{finger}"
+    return _PROFILE["groups"]["full"].format(side=side, finger=finger)
 
 
 def waist_group(side, finger):
     """含腰 3 关节的全链组（--waist free 用，SRDF/插件见 tienkung_dex.srdf）。"""
-    return f"{side}_arm_waist_{finger}"
+    return _PROFILE["groups"]["waist"].format(side=side, finger=finger)
 
 
 DURATION = 8.0            # 每种形状的播放时长 (s)：TOTG 真实时长按比例映射到此窗口
@@ -163,7 +168,7 @@ IK_TOL_MAX = 5e-4         # 迭代用尽时的接受上限
 IK_MAX_STEP = 0.3         # 单步关节增量限幅 (rad)
 
 
-def _parse_args():
+def _parse_args(argv=None):
     ap = argparse.ArgumentParser(description="天工 Dex 双臂双手形状 demo")
     ap.add_argument("shapes", nargs="*", help="circle / arc / triangle / line，缺省全轮换")
     ap.add_argument("--arm", choices=["right", "left", "both"], default="right",
@@ -187,31 +192,43 @@ def _parse_args():
                     help="fixed=腰固定(默认); free=腰3关节并入变量空间(full/fixed模式，"
                          "tcp 恒为 fixed)。--arm both 时腰只归属右臂，左臂在右臂"
                          "解出的腰值上冻结规划（腰是左右共享的物理关节）")
-    return ap.parse_args()
+    return ap.parse_args(argv)
 
 
-ARGS = _parse_args()
-MODE = ARGS.mode
-FINGER_NAME = ARGS.finger_joint
-FINGER_LIST = [s.strip() for s in ARGS.fingers.split(",")] \
-    if ARGS.fingers else [FINGER_NAME]
-if not FINGER_LIST or any(f not in FINGERS for f in FINGER_LIST) \
-        or len(set(FINGER_LIST)) != len(FINGER_LIST):
-    raise SystemExit(f"--fingers 无效: {ARGS.fingers}（应为逗号分隔的手指名，"
-                     f"可选 {list(FINGERS)}，不可重复）")
-if len(FINGER_LIST) > 1 and MODE == "tcp":
-    raise SystemExit("--fingers 多指仅支持 full/fixed 模式（tcp 是回归基线）")
-FINGER = float(np.clip(ARGS.finger, 0.0, FINGERS[FINGER_NAME]["upper"]))
-SIDES = {"right": ("right",), "left": ("left",), "both": ("right", "left")}[ARGS.arm]
-OFFSET = np.asarray(ARGS.offset, float)
-SHAPES = ARGS.shapes or ["circle", "arc", "triangle", "line"]
-
-# B1 腰部冗余：--waist free 时腰 3 关节并入变量空间（full/fixed 模式；tcp 恒 fixed）。
-# 腰 3 关节是左右臂共享的同一组物理关节，--arm both 时只归属右臂，左臂在右臂解出
-# 的腰值上冻结。镜像系数：绕 z(yaw)/x(roll) 的转角在 y 镜像下反号，绕 y(pitch) 不变。
+# 腰关节名与镜像系数是纯常量（与运行配置无关）；--waist free 的启用判定在 configure()
 WAIST_JOINTS = ["waist_33", "waist_32", "waist_31"]
 WAIST_MIRROR = np.array([-1.0, -1.0, 1.0])
-WAIST_FREE = ARGS.waist == "free" and MODE != "tcp"
+
+
+def configure(argv=None):
+    """解析参数并注入模块级运行配置（步 0.5：import 不再有副作用）。
+
+    模块导入零副作用；所有依赖运行配置的全局量（MODE/SIDES/FINGER_LIST/…）
+    由本函数显式设置，main 与测试脚本都经此入口。返回 args 供横幅打印。
+    """
+    global MODE, FINGER_NAME, FINGER_LIST, FINGER, SIDES, OFFSET, SHAPES, WAIST_FREE
+    args = _parse_args(argv)
+    MODE = args.mode
+    FINGER_NAME = args.finger_joint
+    FINGER_LIST = [s.strip() for s in args.fingers.split(",")] \
+        if args.fingers else [FINGER_NAME]
+    if not FINGER_LIST or any(f not in FINGERS for f in FINGER_LIST) \
+            or len(set(FINGER_LIST)) != len(FINGER_LIST):
+        raise SystemExit(f"--fingers 无效: {args.fingers}（应为逗号分隔的手指名，"
+                         f"可选 {list(FINGERS)}，不可重复）")
+    if len(FINGER_LIST) > 1 and MODE == "tcp":
+        raise SystemExit("--fingers 多指仅支持 full/fixed 模式（tcp 是回归基线）")
+    FINGER = float(np.clip(args.finger, 0.0, FINGERS[FINGER_NAME]["upper"]))
+    SIDES = {"right": ("right",), "left": ("left",),
+             "both": ("right", "left")}[args.arm]
+    OFFSET = np.asarray(args.offset, float)
+    SHAPES = args.shapes or ["circle", "arc", "triangle", "line"]
+
+    # B1 腰部冗余：--waist free 时腰 3 关节并入变量空间（full/fixed 模式；tcp 恒 fixed）。
+    # 腰 3 关节是左右臂共享的同一组物理关节，--arm both 时只归属右臂，左臂在右臂解出
+    # 的腰值上冻结。镜像系数：绕 z(yaw)/x(roll) 的转角在 y 镜像下反号，绕 y(pitch) 不变。
+    WAIST_FREE = args.waist == "free" and MODE != "tcp"
+    return args
 
 
 def make_path(shape, u, v, center, size=SIZE, n=N_POINTS):
@@ -345,30 +362,21 @@ def fix_allowed_collisions(robot, cfgs):
     所有父子链接对，再用随机采样找出并禁用那些网格本身就互相穿插的“结构性
     重叠”对。采样轮流经过各侧 cfg['sample_state']，手指 distal 始终按耦合写入。
     """
-    from tesseract_robotics.tesseract_collision import (
-        ContactRequest, ContactResultMap, ContactResultVector, ContactTestType_ALL)
-
     tree = ET.parse(URDF)
     for j in tree.getroot().findall("joint"):
         p, c = j.find("parent"), j.find("child")
         if p is not None and c is not None:
             robot.add_allowed_collision(p.get("link"), c.get("link"), "Adjacent")
 
-    mgr = robot.env.getDiscreteContactManager()
-    mgr.setActiveCollisionObjects(robot.env.getActiveLinkNames())
-    mgr.setDefaultCollisionMargin(COLLISION_MARGIN)
-    req = ContactRequest(ContactTestType_ALL)
+    mgr = tess.contact_manager(robot.env, COLLISION_MARGIN)
+    req = tess.contact_request()
     req.calculate_distance = True
 
     def pairs():
         for cfg in cfgs:
             cfg["sample_state"](rng)
         mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
-        res = ContactResultMap()
-        mgr.contactTest(res, req)
-        vec = ContactResultVector()
-        res.flattenMoveResults(vec)
-        return [tuple(sorted(vec[i].link_names)) for i in range(len(vec))]
+        return [tuple(sorted(p)) for p in tess.contact_test(mgr, req)]
 
     rng = np.random.default_rng(0)
     count = {}
@@ -384,106 +392,18 @@ def plan_path(robot, cfg, poses, seed, ik_fn, return_result=False):
     """Descartes 笛卡尔规划，返回关节轨迹 (N, len(cfg['joint_names']))。
 
     return_result=True 时返回 (Q, response)，response.results 可直接交给
-    时间参数化（TOTG）做后处理。
-
-    默认采样器用全零关节向量作为 IK 种子，而 KDLInvKinChainLMA 对本臂（限位高度
-    不对称）从零种子不收敛，会报 "LadderGraphSolver failed to build graph"，
-    所以这里自己写带热启动的采样器。
-
-    三个 tesseract 绑定的坑（都已规避）：
-      1. Robot.ik 默认 tip_link 是 getActiveLinkNames() 的末元素（实测
-         right_index_touch_link），必须显式传 TCP，否则解出来的位姿完全不对。
-      2. 必须直接继承 DescartesMoveProfileD —— nanobind 的 trampoline 注册在这个
-         类上；继承 DescartesDefaultMoveProfileD 的 Python 子类不会把虚函数派发回
-         Python（createWaypointSampler 一次都不会被调用）。
-      3. Robot.ik/fk 的坐标系是 pelvis（组 base 被上溯到根链接），不是 SRDF 里写的
-         waist_pitch_link。
+    时间参数化（TOTG）做后处理。绑定细节与三个绑定坑的规避都在
+    tess.descartes_plan（L1 防腐层）。
     """
-    from tesseract_robotics.planning.profiles import DESCARTES_DEFAULT_NAMESPACE
-    from tesseract_robotics.tesseract_command_language import (
-        CartesianWaypoint, CartesianWaypointPoly_wrap_CartesianWaypoint, CompositeInstruction,
-        InstructionPoly_as_MoveInstructionPoly, MoveInstruction,
-        MoveInstructionPoly_wrap_MoveInstruction, MoveInstructionType_LINEAR, ProfileDictionary,
-        WaypointPoly_as_CartesianWaypointPoly, WaypointPoly_as_StateWaypointPoly)
-    from tesseract_robotics.tesseract_motion_planners import PlannerRequest
-    from tesseract_robotics.tesseract_motion_planners_descartes import (
-        DescartesDefaultMoveProfileD, DescartesMotionPlannerD, DescartesMoveProfileD,
-        DescartesStateD, DescartesStateSampleD, DescartesWaypointSamplerD,
-        cast_DescartesMoveProfileD)
-    from tesseract_robotics.tesseract_motion_planners_simple import generateInterpolatedProgram
-
-    class FixedSampler(DescartesWaypointSamplerD):
-        def __init__(self, samples):
-            super().__init__()
-            self._samples = samples
-
-        def sample(self):
-            return self._samples
-
-    class WarmStartProfile(DescartesMoveProfileD):
-        def __init__(self):
-            super().__init__()
-            self._inner = DescartesDefaultMoveProfileD()
-            self._last = np.asarray(seed, float).copy()
-            self.ok = self.fail = 0
-
-        def createWaypointSampler(self, mi, info, env):
-            wp = mi.getWaypoint()
-            if not wp.isCartesianWaypoint():
-                return self._inner.createWaypointSampler(mi, info, env)
-            pose = Pose(WaypointPoly_as_CartesianWaypointPoly(wp).getTransform())
-            sol = ik_fn(pose, self._last)
-            if sol is None:
-                sol = ik_fn(pose, seed)
-            if sol is None:
-                self.fail += 1
-                return FixedSampler([])
-            self._last = np.asarray(sol, float)
-            self.ok += 1
-            return FixedSampler([DescartesStateSampleD(DescartesStateD(self._last), 0.0)])
-
-        def createEdgeEvaluator(self, mi, info, env):
-            return self._inner.createEdgeEvaluator(mi, info, env)
-
-        def createStateEvaluator(self, mi, info, env):
-            return self._inner.createStateEvaluator(mi, info, env)
-
     info = robot.get_manipulator_info(cfg["group"], tcp_frame=cfg["tcp"], working_frame=FRAME)
-    program = CompositeInstruction()
-    program.setManipulatorInfo(info)
-    for pose in poses:
-        mi = MoveInstruction(CartesianWaypointPoly_wrap_CartesianWaypoint(CartesianWaypoint(pose)),
-                             MoveInstructionType_LINEAR, "WARMSTART")
-        mi.setManipulatorInfo(info)
-        program.appendMoveInstruction(MoveInstructionPoly_wrap_MoveInstruction(mi))
-
-    # 航点已足够密，阈值设成略大于间距即可避免插值产生新的、可能无解的位姿
     spacing = 2.0 * math.pi * SIZE / N_POINTS
-    interp = generateInterpolatedProgram(program, robot.env, 0.1, spacing * 1.05, 0.1, 1)
-
-    profile = WarmStartProfile()
-    profiles = ProfileDictionary()
-    profiles.addProfile(DESCARTES_DEFAULT_NAMESPACE, "WARMSTART",
-                        cast_DescartesMoveProfileD(profile))
-
-    request = PlannerRequest()
-    request.instructions = interp
-    request.env = robot.env
-    request.profiles = profiles
-    response = DescartesMotionPlannerD(DESCARTES_DEFAULT_NAMESPACE).solve(request)
-    print(f"  Descartes: {'成功' if response.successful else '失败: ' + response.message}"
-          f"  (航点 IK {profile.ok}/{profile.ok + profile.fail})")
-    if not response.successful:
+    out = tess.descartes_plan(robot.env, info, poses, ik_fn, seed, spacing)
+    if out is None:
+        print("  Descartes: 失败")
         return None
-
-    Q = []
-    for instr in response.results:
-        if instr.isMoveInstruction():
-            wp = InstructionPoly_as_MoveInstructionPoly(instr).getWaypoint()
-            if wp.isStateWaypoint():
-                Q.append(np.asarray(WaypointPoly_as_StateWaypointPoly(wp).getPosition(), float))
-    Q = np.asarray(Q)
-    return (Q, response, (profile.ok, profile.ok + profile.fail)) if return_result else Q
+    Q, response, (ok, total) = out
+    print(f"  Descartes: 成功  (航点 IK {ok}/{total})")
+    return (Q, response, (ok, total)) if return_result else Q
 
 
 # ---------------------------------------------------------------- 时间参数化 / 过渡
@@ -493,46 +413,19 @@ def extract_timed_trajectory(robot, results):
     ts 为各航点的 time_from_start (s)，轨迹首尾速度为零。失败返回 ts=None
     （调用方回退匀速播放）。探针已验证：72 点 circle 2.66s、峰值 2.6 rad/s。
     """
-    from tesseract_robotics.tesseract_command_language import (
-        InstructionPoly_as_MoveInstructionPoly, ProfileDictionary,
-        WaypointPoly_as_StateWaypointPoly)
-    from tesseract_robotics.tesseract_time_parameterization import (
-        TimeOptimalTrajectoryGeneration)
-
-    try:
-        if not TimeOptimalTrajectoryGeneration().compute(results, robot.env, ProfileDictionary()):
-            return None
-    except Exception as e:  # noqa: BLE001
-        print(f"  TOTG 失败({e})，回退匀速播放")
+    timed = tess.totg(results, robot.env)
+    if timed is None:
+        print("  TOTG 失败，回退匀速播放")
         return None
-
-    Q, ts = [], []
-    for instr in results:
-        if instr.isMoveInstruction():
-            wp = InstructionPoly_as_MoveInstructionPoly(instr).getWaypoint()
-            if wp.isStateWaypoint():
-                swp = WaypointPoly_as_StateWaypointPoly(wp)
-                Q.append(np.asarray(swp.getPosition(), float))
-                ts.append(float(swp.getTime()))
-    if len(Q) < 2 or ts[-1] <= 0:
-        return None
-    return np.asarray(Q), np.asarray(ts)
+    return timed
 
 
 def _scan_collision(robot, cfgs, qsides, mgr, req, acm):
     """设置各侧状态后做一次碰撞扫描，返回首个未被 ACM 允许的碰撞对或 None。"""
-    from tesseract_robotics.tesseract_collision import (
-        ContactResultMap, ContactResultVector)
-
     for side, cfg in cfgs.items():
         cfg["set_state"](qsides[side])
     mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
-    res = ContactResultMap()
-    mgr.contactTest(res, req)
-    vec = ContactResultVector()
-    res.flattenMoveResults(vec)
-    for i in range(len(vec)):
-        l1, l2 = vec[i].link_names[0], vec[i].link_names[1]
+    for l1, l2 in tess.contact_test(mgr, req):
         if acm.isCollisionAllowed(l1, l2):
             return (l1, l2)
     return None
@@ -545,15 +438,11 @@ def plan_transition(robot, cfgs, Q_from, Q_to, n=32, tries=8):
     碰撞扫描；失败再试带随机中间路标点的分段插值。返回 {side: (n+1, dof)}
     帧序列，失败返回 None。按 cfg['joint_names'] 泛化维度，不依赖具体模式。
     """
-    from tesseract_robotics.tesseract_collision import ContactRequest, ContactTestType_ALL
-
-    mgr = robot.env.getDiscreteContactManager()
-    mgr.setActiveCollisionObjects(robot.env.getActiveLinkNames())
-    mgr.setDefaultCollisionMargin(COLLISION_MARGIN)
-    req = ContactRequest(ContactTestType_ALL)
-    acm = robot.env.getAllowedCollisionMatrix()
-    lo = {s: c["limits"]["lo"] for s, c in cfgs.items()}
-    hi = {s: c["limits"]["hi"] for s, c in cfgs.items()}
+    mgr = tess.contact_manager(robot.env, COLLISION_MARGIN)
+    req = tess.contact_request()
+    acm = tess.acm(robot.env)
+    lo = {s: c.limits[0] for s, c in cfgs.items()}
+    hi = {s: c.limits[1] for s, c in cfgs.items()}
 
     def smooth(t):
         return t * t * (3.0 - 2.0 * t)
@@ -627,7 +516,7 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
     n = min(len(Q), len(points))
     pos_err = np.linalg.norm(tip[:n] - points[:n], axis=1)
     plane_dev = (tip[:n] - cfg["center"]) @ PLANE_NORMAL
-    margin = min(float(np.min(np.minimum(qq - cfg["limits"]["lo"], cfg["limits"]["hi"] - qq)))
+    margin = min(float(np.min(np.minimum(qq - cfg.limits[0], cfg.limits[1] - qq)))
                  for qq in Q)
     dur = f"  时长 {ts[-1]:.2f}s" if ts is not None else ""
     print(f"  {label}{shape:9s} {len(Q)} 点  路径误差 {np.max(pos_err)*1000:.4f} mm  "
@@ -669,13 +558,8 @@ def check_dual_collision(robot, cfgs, results):
     左右臂互碰（或与躯干——那单臂规划时也会撞，不会到这里）。返回 True 表示
     通过；发现左右互碰则打印并返回 False。
     """
-    from tesseract_robotics.tesseract_collision import (
-        ContactRequest, ContactResultMap, ContactResultVector, ContactTestType_ALL)
-
-    mgr = robot.env.getDiscreteContactManager()
-    mgr.setActiveCollisionObjects(robot.env.getActiveLinkNames())
-    mgr.setDefaultCollisionMargin(COLLISION_MARGIN)
-    req = ContactRequest(ContactTestType_ALL)
+    mgr = tess.contact_manager(robot.env, COLLISION_MARGIN)
+    req = tess.contact_request()
 
     (pts_r, Q_r), (pts_l, Q_l) = results["right"][:2], results["left"][:2]
     jn_r, jn_l = cfgs["right"]["joint_names"], cfgs["left"]["joint_names"]
@@ -684,186 +568,264 @@ def check_dual_collision(robot, cfgs, results):
         robot.env.setState(jn_r, Q_r[k])
         robot.env.setState(jn_l, Q_l[k])
         mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
-        res = ContactResultMap()
-        mgr.contactTest(res, req)
-        vec = ContactResultVector()
-        res.flattenMoveResults(vec)
-        for i in range(len(vec)):
-            sides = {_link_side(nm) for nm in vec[i].link_names}
+        for pair in tess.contact_test(mgr, req):
+            sides = {_link_side(nm) for nm in pair}
             if "left" in sides and "right" in sides:
                 print(f"  双臂碰撞校验: 第 {k}/{n} 点左右臂相交 "
-                      f"({vec[i].link_names[0]} <-> {vec[i].link_names[1]})")
+                      f"({pair[0]} <-> {pair[1]})")
                 return False
     return True
 
 
-# ---------------------------------------------------------------- 模式配置
-def build_cfg(robot, side, finger, mode, arm_seed):
-    """按 (侧, 手指, 模式) 组装规划所需的组/TCP/种子/IK 等配置。
+# ---------------------------------------------------------------- 模式装配（步 2+3：ModeConfig + 策略注册表）
+class _HandAssembly:
+    """full/fixed 共享装配：组关节名、状态展开器、ACM 采样器、腰变量处理。
 
     tesseract 的 env.setState 不会自动应用 URDF <mimic>（distal 漏写就冻在 0），
     所以手指 distal 一律按耦合系数显式写入——与 hand_bridge 在指令侧展开耦合
     是同一个道理。左臂的基准量（中心/姿态）一律由右臂标定值经 M 镜像得出。
-
-    变量空间（B1）：--waist free 且非 tcp 模式时腰 3 关节并入变量空间，规划组
-    换成含腰全链组（根 pelvis），变量 = [腰3?] + 臂7 + [指1?]，IK 返回组全状态
-    向量（distal 仍按耦合显式写入）。--arm both 时腰只归右臂（waist_owned），
-    左臂的腰从 frozen_waist 单元格读取，规划右臂后经 set_frozen_waist 注入。
     """
-    spec = FINGERS[finger]
-    mult, prox_j = spec["mult"], prox_joint(side, finger)
-    distal_j, tip = distal_joint(side, finger), tip_link(side, finger)
-    mc_j = spec["mc_joint"].format(side=side) if "mc_joint" in spec else None
 
-    # 基准姿态/中心：右臂用标定值，左臂镜像
-    center0 = CENTER_TCP if side == "right" else CENTER_TCP_L
-    rot0 = ROTATION_TCP if side == "right" else ROTATION_TCP_L
+    def __init__(self, robot, side, finger):
+        self.robot, self.side, self.finger = robot, side, finger
+        spec = FINGERS[finger]
+        self.spec = spec
+        self.mult, self.prox_j = spec["mult"], prox_joint(side, finger)
+        self.distal_j, self.tip = distal_joint(side, finger), tip_link(side, finger)
+        self.mc_j = spec["mc_joint"].format(side=side) if "mc_joint" in spec else None
 
-    arm_names = robot.get_joint_names(ARM_GROUP[side])
-    lo7 = np.array([robot.get_joint_limits(ARM_GROUP[side])[n]["lower"] for n in arm_names])
-    hi7 = np.array([robot.get_joint_limits(ARM_GROUP[side])[n]["upper"] for n in arm_names])
+        self.arm_names = robot.get_joint_names(ARM_GROUP[side])
+        self.lo7 = np.array([robot.get_joint_limits(ARM_GROUP[side])[n]["lower"]
+                             for n in self.arm_names])
+        self.hi7 = np.array([robot.get_joint_limits(ARM_GROUP[side])[n]["upper"]
+                             for n in self.arm_names])
 
-    waist_free = WAIST_FREE and mode != "tcp"
-    waist_owned = waist_free and not (len(SIDES) == 2 and side == "left")
-    frozen_waist = {"w": np.zeros(len(WAIST_JOINTS))}
+        self.waist_free = WAIST_FREE          # tcp 模式不走本装配，无需再判 mode
+        self.waist_owned = self.waist_free and not (len(SIDES) == 2 and side == "left")
+        self.frozen_waist = {"w": np.zeros(len(WAIST_JOINTS))}
 
-    if waist_free:
-        group = waist_group(side, finger)
-        jn_state = robot.get_joint_names(group)
-        expect = (set(WAIST_JOINTS) | set(arm_names) | {prox_j, distal_j}
-                  | ({mc_j} if mc_j else set()))
-        assert set(jn_state) == expect, f"{group} 关节异常: {jn_state}"
-        lims = robot.get_joint_limits(group)
-    else:
-        jn_state = robot.get_joint_names(full_group(side, finger))
-        expect = set(arm_names) | {prox_j, distal_j} | ({mc_j} if mc_j else set())
-        assert set(jn_state) == expect, f"{full_group(side, finger)} 关节异常: {jn_state}"
+        if self.waist_free:
+            self.group = waist_group(side, finger)
+            jn = robot.get_joint_names(self.group)
+            expect = (set(WAIST_JOINTS) | set(self.arm_names)
+                      | {self.prox_j, self.distal_j}
+                      | ({self.mc_j} if self.mc_j else set()))
+            assert set(jn) == expect, f"{self.group} 关节异常: {jn}"
+            self.lims = robot.get_joint_limits(self.group)
+        else:
+            self.group = full_group(side, finger)
+            jn = robot.get_joint_names(self.group)
+            expect = (set(self.arm_names) | {self.prox_j, self.distal_j}
+                      | ({self.mc_j} if self.mc_j else set()))
+            assert set(jn) == expect, f"{self.group} 关节异常: {jn}"
+            self.lims = None
+        self.jn_state = jn
 
-    def state_values(q_arm, prox):
-        vals = {**dict(zip(arm_names, q_arm)), prox_j: prox, distal_j: mult * prox}
-        if mc_j:
-            vals[mc_j] = 0.0                     # thumb_rot 固定
-        return np.array([vals[n] for n in jn_state])
+    def state_values(self, q_arm, prox):
+        vals = {**dict(zip(self.arm_names, q_arm)),
+                self.prox_j: prox, self.distal_j: self.mult * prox}
+        if self.mc_j:
+            vals[self.mc_j] = 0.0                     # thumb_rot 固定
+        return np.array([vals[n] for n in self.jn_state])
 
-    def sample_full(rng):
-        x8 = np.append(rng.uniform(lo7, hi7),
-                       rng.uniform(0.0, spec["upper"]))
-        robot.env.setState(jn_state, state_values(x8[:7], x8[7]))
+    def sample_full(self, rng):
+        x8 = np.append(rng.uniform(self.lo7, self.hi7),
+                       rng.uniform(0.0, self.spec["upper"]))
+        self.robot.env.setState(self.jn_state, self.state_values(x8[:7], x8[7]))
 
-    def sample_fixed(rng):
-        robot.env.setState(jn_state, state_values(rng.uniform(lo7, hi7), FINGER))
+    def sample_fixed(self, rng):
+        self.robot.env.setState(self.jn_state,
+                                self.state_values(rng.uniform(self.lo7, self.hi7), FINGER))
 
-    def make_waist_state(var_names):
+    def make_waist_state(self, var_names, mode):
         """构造 waist 模式的变量->组全状态展开器（distal 按耦合显式写入）。"""
+        lims = self.lims
         lo_v = np.array([lims[n]["lower"] for n in var_names])
         hi_v = np.array([lims[n]["upper"] for n in var_names])
-        if waist_owned:
+        if self.waist_owned:
             # 组链顺序 = [腰3, 臂7, (mc,) prox, distal]，变量必须是状态前缀
             # （warm-start 种子按前 n 个切片）
-            assert list(jn_state[:len(var_names)]) == list(var_names), \
-                f"{group} 变量前缀异常: {jn_state}"
+            assert list(self.jn_state[:len(var_names)]) == list(var_names), \
+                f"{self.group} 变量前缀异常: {self.jn_state}"
 
         def state_full(x):
             d = dict(zip(var_names, np.asarray(x, float)))
-            vals = {a: d[a] for a in arm_names}
+            vals = {a: d[a] for a in self.arm_names}
             if mode == "full":
-                vals[prox_j] = d[prox_j]
-                vals[distal_j] = mult * d[prox_j]
+                vals[self.prox_j] = d[self.prox_j]
+                vals[self.distal_j] = self.mult * d[self.prox_j]
             else:
-                vals[prox_j] = FINGER
-                vals[distal_j] = mult * FINGER
-            if mc_j:
-                vals[mc_j] = 0.0
-            if waist_owned:
+                vals[self.prox_j] = FINGER
+                vals[self.distal_j] = self.mult * FINGER
+            if self.mc_j:
+                vals[self.mc_j] = 0.0
+            if self.waist_owned:
                 vals.update({w: d[w] for w in WAIST_JOINTS})
             else:
-                vals.update(zip(WAIST_JOINTS, frozen_waist["w"]))
-            return np.array([vals[n] for n in jn_state])
+                vals.update(zip(WAIST_JOINTS, self.frozen_waist["w"]))
+            return np.array([vals[n] for n in self.jn_state])
 
         # 冻结腰时变量前面垫着腰 3 个状态位，warm-start 种子要跳过
-        tv = None if waist_owned else (
+        tv = None if self.waist_owned else (
             lambda s: np.asarray(s, float)[len(WAIST_JOINTS):
                                            len(WAIST_JOINTS) + len(var_names)])
 
         def sample(rng):
-            robot.env.setState(jn_state, state_full(rng.uniform(lo_v, hi_v)))
+            self.robot.env.setState(self.jn_state,
+                                    state_full(rng.uniform(lo_v, hi_v)))
 
         return lo_v, hi_v, state_full, tv, sample
 
-    if mode == "tcp":
-        return {
-            "mode": mode, "side": side, "group": ARM_GROUP[side],
-            "tcp": TCP_LINK[side], "tip_frame": TCP_LINK[side],
-            "joint_names": arm_names,
-            "set_state": lambda q: robot.env.setState(arm_names, np.asarray(q, float)),
-            "sample_state": lambda rng: robot.env.setState(arm_names, rng.uniform(lo7, hi7)),
-            "seed_plan": arm_seed.copy(),
-            "center": center0.copy(), "rotation": rot0.copy(),
-            "ik_fn": lambda pose, s: robot.ik(ARM_GROUP[side], pose, seed=s,
-                                              tip_link=TCP_LINK[side]),
-        }
 
-    if mode == "full":
-        if waist_free:
-            var_names = (WAIST_JOINTS if waist_owned else []) + arm_names + [prox_j]
-            lo_v, hi_v, state_full, tv, sample_w = make_waist_state(var_names)
-            seed_vars = np.array(([0.0] * 3 if waist_owned else [])
-                                 + list(arm_seed) + [FINGER])
-            seed_state = state_full(seed_vars)
-            robot.env.setState(jn_state, seed_state)
-            T = robot.env.getState().link_transforms[tip]
-            cfg = {
-                "mode": mode, "side": side, "group": group,
-                "tcp": tip, "tip_frame": tip,
-                "joint_names": jn_state,
-                "set_state": lambda q: robot.env.setState(jn_state, np.asarray(q, float)),
-                "sample_state": sample_w,
-                "seed_plan": seed_state,
-                "center": np.array(T.translation, float),
-                "rotation": np.array(T.rotation, float),
-                "ik_fn": make_finger_ik(robot, jn_state, lo_v, hi_v, state_full, tip,
-                                        full=True, to_vars=tv),
-            }
-            if not waist_owned:              # both 模式左臂：右臂规划后注入冻结腰值
-                def set_frozen(w, cell=frozen_waist):
-                    cell["w"] = np.asarray(w, float)
-                cfg["set_frozen_waist"] = set_frozen
-            return cfg
+def _base_pose(side):
+    """基准姿态/中心：右臂用标定值，左臂镜像。"""
+    center0 = CENTER_TCP if side == "right" else CENTER_TCP_L
+    rot0 = ROTATION_TCP if side == "right" else ROTATION_TCP_L
+    return center0, rot0
 
-        seed_state = state_values(arm_seed, FINGER)
-        robot.env.setState(jn_state, seed_state)
-        T = robot.env.getState().link_transforms[tip]
-        return {
-            "mode": mode, "side": side, "group": full_group(side, finger),
-            "tcp": tip, "tip_frame": tip,
-            "joint_names": jn_state,
-            "set_state": lambda q: robot.env.setState(jn_state, np.asarray(q, float)),
-            "sample_state": sample_full,
-            "seed_plan": seed_state,
-            "center": np.array(T.translation, float),
-            "rotation": np.array(T.rotation, float),
-            "ik_fn": make_finger_ik(
-                robot, jn_state, np.append(lo7, 0.0), np.append(hi7, spec["upper"]),
-                lambda x: state_values(x[:7], x[7]), tip, full=True),
-        }
 
-    # fixed 模式：手指固定，指尖相对 tcp 的偏移 p_off 是常量。指尖路径中心取
-    # 基准中心 + 基准姿态 ∘ p_off，使换算出的 tcp 路径恰好落在 tcp 模式已验证
-    # 可行的中心圆上（若围绕种子指尖位置取中心，tcp 路径会偏出腕部可达姿态区，
-    # LMA/DLS 都会失败）。左臂用镜像基准，手部镜像精确时结果与右臂严格镜像。
-    if waist_free:
-        var_names = (WAIST_JOINTS if waist_owned else []) + arm_names
-        lo_v, hi_v, state_full, tv, sample_w = make_waist_state(var_names)
-        seed_state = state_full(np.array(([0.0] * 3 if waist_owned else []) + list(arm_seed)))
-        robot.env.setState(jn_state, seed_state)
-        Ttip = robot.env.getState().link_transforms[tip]
+class TcpModeStrategy:
+    """tcp 模式（回归基线）：变量 = 臂 7，跟踪 tcp。"""
+    name = "tcp"
+
+    def build(self, robot, side, finger, arm_seed):
+        asm = _HandAssembly(robot, side, finger)
+        center0, rot0 = _base_pose(side)
+        return ModeConfig(
+            mode_name=self.name, side=side, group=ARM_GROUP[side],
+            tcp_frame=TCP_LINK[side], tip_frame=TCP_LINK[side],
+            state_joint_names=asm.arm_names,
+            set_state=lambda q: robot.env.setState(asm.arm_names,
+                                                   np.asarray(q, float)),
+            sample_spec="tcp",
+            sample_state=lambda rng: robot.env.setState(
+                asm.arm_names, rng.uniform(asm.lo7, asm.hi7)),
+            seed_plan=arm_seed.copy(),
+            center=center0.copy(), rotation=rot0.copy(),
+            ik=lambda pose, s: robot.ik(ARM_GROUP[side], pose, seed=s,
+                                        tip_link=TCP_LINK[side]),
+            var_names=list(asm.arm_names), lo=asm.lo7, hi=asm.hi7)
+
+
+class FullModeStrategy:
+    """full 模式：臂+手指耦合全链，主指 prox 是变量。"""
+    name = "full"
+
+    def build(self, robot, side, finger, arm_seed):
+        asm = _HandAssembly(robot, side, finger)
+
+        if not asm.waist_free:
+            seed_state = asm.state_values(arm_seed, FINGER)
+            robot.env.setState(asm.jn_state, seed_state)
+            T = robot.env.getState().link_transforms[asm.tip]
+            return ModeConfig(
+                mode_name=self.name, side=side, group=asm.group,
+                tcp_frame=asm.tip, tip_frame=asm.tip,
+                state_joint_names=asm.jn_state,
+                set_state=lambda q: robot.env.setState(asm.jn_state,
+                                                       np.asarray(q, float)),
+                sample_spec="full", sample_state=asm.sample_full,
+                seed_plan=seed_state,
+                center=np.array(T.translation, float),
+                rotation=np.array(T.rotation, float),
+                ik=make_finger_ik(
+                    robot, asm.jn_state, np.append(asm.lo7, 0.0),
+                    np.append(asm.hi7, asm.spec["upper"]),
+                    lambda x: asm.state_values(x[:7], x[7]), asm.tip, full=True),
+                var_names=list(asm.arm_names) + [asm.prox_j],
+                lo=np.append(asm.lo7, 0.0), hi=np.append(asm.hi7, asm.spec["upper"]))
+
+        var_names = (WAIST_JOINTS if asm.waist_owned else []) \
+            + asm.arm_names + [asm.prox_j]
+        lo_v, hi_v, state_full, tv, sample_w = asm.make_waist_state(var_names, self.name)
+        seed_vars = np.array(([0.0] * 3 if asm.waist_owned else [])
+                             + list(arm_seed) + [FINGER])
+        seed_state = state_full(seed_vars)
+        robot.env.setState(asm.jn_state, seed_state)
+        T = robot.env.getState().link_transforms[asm.tip]
+        cfg = ModeConfig(
+            mode_name=self.name, side=side, group=asm.group,
+            tcp_frame=asm.tip, tip_frame=asm.tip,
+            state_joint_names=asm.jn_state,
+            set_state=lambda q: robot.env.setState(asm.jn_state,
+                                                   np.asarray(q, float)),
+            sample_spec="full_waist", sample_state=sample_w,
+            seed_plan=seed_state,
+            center=np.array(T.translation, float),
+            rotation=np.array(T.rotation, float),
+            ik=make_finger_ik(robot, asm.jn_state, lo_v, hi_v, state_full, asm.tip,
+                              full=True, to_vars=tv),
+            var_names=list(var_names), lo=lo_v, hi=hi_v)
+        if not asm.waist_owned:              # both 模式左臂：右臂规划后注入冻结腰值
+            def set_frozen(w, cell=asm.frozen_waist):
+                cell["w"] = np.asarray(w, float)
+            cfg.frozen_waist_setter = set_frozen
+        return cfg
+
+
+class FixedModeStrategy:
+    """fixed 模式：手指固定在 --finger 值，臂 7-DOF（+腰）带 tcp 走轨迹。"""
+    name = "fixed"
+
+    def build(self, robot, side, finger, arm_seed):
+        asm = _HandAssembly(robot, side, finger)
+        center0, rot0 = _base_pose(side)
+
+        # fixed 模式：手指固定，指尖相对 tcp 的偏移 p_off 是常量。指尖路径中心取
+        # 基准中心 + 基准姿态 ∘ p_off，使换算出的 tcp 路径恰好落在 tcp 模式已验证
+        # 可行的中心圆上（若围绕种子指尖位置取中心，tcp 路径会偏出腕部可达姿态区，
+        # LMA/DLS 都会失败）。左臂用镜像基准，手部镜像精确时结果与右臂严格镜像。
+        if not asm.waist_free:
+            robot.env.setState(asm.jn_state, asm.state_values(arm_seed, FINGER))
+            Ttip = robot.env.getState().link_transforms[asm.tip]
+            Ttcp = robot.env.getState().link_transforms[TCP_LINK[side]]
+            T_tcp = np.eye(4); T_tcp[:3, :3] = np.array(Ttcp.rotation); T_tcp[:3, 3] = np.array(Ttcp.translation)
+            T_tip = np.eye(4); T_tip[:3, :3] = np.array(Ttip.rotation); T_tip[:3, 3] = np.array(Ttip.translation)
+            T_off = np.linalg.inv(T_tcp) @ T_tip                  # tcp 系下指尖的常量位姿
+            p_off = np.array(T_off[:3, 3], float)
+            R_off = np.array(T_off[:3, :3], float)
+            dls = make_finger_ik(robot, asm.jn_state, asm.lo7, asm.hi7,
+                                 lambda x: asm.state_values(x[:7], FINGER),
+                                 asm.tip, full=False)
+
+            def ik_fn(pose, s):
+                sol = robot.ik(ARM_GROUP[side], pose, seed=s, tip_link=TCP_LINK[side])
+                if sol is not None:
+                    return np.asarray(sol, float)
+                return dls(pose, s)
+
+            return ModeConfig(
+                mode_name=self.name, side=side, group=ARM_GROUP[side],
+                tcp_frame=TCP_LINK[side], tip_frame=asm.tip,
+                state_joint_names=asm.arm_names,
+                set_state=lambda q: robot.env.setState(
+                    asm.jn_state, asm.state_values(q, FINGER)),
+                sample_spec="fixed", sample_state=asm.sample_fixed,
+                seed_plan=arm_seed.copy(),
+                center=center0 + rot0 @ p_off,
+                rotation=rot0 @ R_off,               # 指尖的固定姿态（仅记录用）
+                plan_rotation=rot0,                  # fixed 模式 tcp 目标姿态
+                tip_offset=p_off,
+                ik=ik_fn,
+                # distal 也要显式发布：部分 robot_state_publisher 版本不应用
+                # URDF <mimic>，只发 proximal 的话渲染出的手指是直的、渲染指尖
+                # 会偏离预览轨迹
+                other_pos={asm.prox_j: FINGER, asm.distal_j: asm.mult * FINGER},
+                var_names=list(asm.arm_names), lo=asm.lo7, hi=asm.hi7)
+
+        var_names = (WAIST_JOINTS if asm.waist_owned else []) + asm.arm_names
+        lo_v, hi_v, state_full, tv, sample_w = asm.make_waist_state(var_names, self.name)
+        seed_state = state_full(np.array(([0.0] * 3 if asm.waist_owned else [])
+                                         + list(arm_seed)))
+        robot.env.setState(asm.jn_state, seed_state)
+        Ttip = robot.env.getState().link_transforms[asm.tip]
         Ttcp = robot.env.getState().link_transforms[TCP_LINK[side]]
         T_tcp = np.eye(4); T_tcp[:3, :3] = np.array(Ttcp.rotation); T_tcp[:3, 3] = np.array(Ttcp.translation)
         T_tip = np.eye(4); T_tip[:3, :3] = np.array(Ttip.rotation); T_tip[:3, 3] = np.array(Ttip.translation)
-        T_off = np.linalg.inv(T_tcp) @ T_tip
+        T_off = np.linalg.inv(T_tcp) @ T_tip                      # tcp 系下指尖的常量位姿
         p_off = np.array(T_off[:3, 3], float)
         R_off = np.array(T_off[:3, :3], float)
-        dls = make_finger_ik(robot, jn_state, lo_v, hi_v, state_full, tip,
+        dls = make_finger_ik(robot, asm.jn_state, lo_v, hi_v, state_full, asm.tip,
                              full=True, to_vars=tv)
 
         def ik_fn(pose, s):
@@ -875,68 +837,55 @@ def build_cfg(robot, side, finger, mode, arm_seed):
             if sol is not None:
                 return sol
             sv = (np.asarray(s, float) if tv is None else tv(s))[:len(var_names)]
-            w0 = sv[:len(WAIST_JOINTS)] if waist_owned else frozen_waist["w"]
+            w0 = sv[:len(WAIST_JOINTS)] if asm.waist_owned else asm.frozen_waist["w"]
             robot.env.setState(WAIST_JOINTS, np.asarray(w0, float))
-            sol7 = robot.ik(ARM_GROUP[side], pose, seed=sv[-7:], tip_link=TCP_LINK[side])
+            sol7 = robot.ik(ARM_GROUP[side], pose, seed=sv[-7:],
+                            tip_link=TCP_LINK[side])
             if sol7 is None:
                 return None
             x = sv.copy()
             x[-7:] = np.asarray(sol7, float)
             return state_full(x)
 
-        cfg = {
-            "mode": mode, "side": side, "group": group,
+        cfg = ModeConfig(
+            mode_name=self.name, side=side, group=asm.group,
             # 腰组链里没有 tcp_link，Descartes 直接跟踪指尖：位姿用指尖目标
             # （固定姿态 rot0∘R_off、位置即路径点），无需 fixed 模式的 tcp 换算
-            "tcp": tip, "tip_frame": tip,
-            "joint_names": jn_state,
-            "set_state": lambda q: robot.env.setState(jn_state, np.asarray(q, float)),
-            "sample_state": sample_w,
-            "seed_plan": seed_state,
-            "center": center0 + rot0 @ p_off,
-            "rotation": rot0 @ R_off,
-            "ik_fn": ik_fn,
-            "other_pos": {prox_j: FINGER, distal_j: mult * FINGER},
-        }
-        if not waist_owned:
-            def set_frozen(w, cell=frozen_waist):
+            tcp_frame=asm.tip, tip_frame=asm.tip,
+            state_joint_names=asm.jn_state,
+            set_state=lambda q: robot.env.setState(asm.jn_state,
+                                                   np.asarray(q, float)),
+            sample_spec="fixed_waist", sample_state=sample_w,
+            seed_plan=seed_state,
+            center=center0 + rot0 @ p_off,
+            rotation=rot0 @ R_off,
+            ik=ik_fn,
+            other_pos={asm.prox_j: FINGER, asm.distal_j: asm.mult * FINGER},
+            var_names=list(var_names), lo=lo_v, hi=hi_v)
+        if not asm.waist_owned:
+            def set_frozen(w, cell=asm.frozen_waist):
                 cell["w"] = np.asarray(w, float)
-            cfg["set_frozen_waist"] = set_frozen
+            cfg.frozen_waist_setter = set_frozen
         return cfg
 
-    robot.env.setState(jn_state, state_values(arm_seed, FINGER))
-    Ttip = robot.env.getState().link_transforms[tip]
-    Ttcp = robot.env.getState().link_transforms[TCP_LINK[side]]
-    T_tcp = np.eye(4); T_tcp[:3, :3] = np.array(Ttcp.rotation); T_tcp[:3, 3] = np.array(Ttcp.translation)
-    T_tip = np.eye(4); T_tip[:3, :3] = np.array(Ttip.rotation); T_tip[:3, 3] = np.array(Ttip.translation)
-    T_off = np.linalg.inv(T_tcp) @ T_tip                      # tcp 系下指尖的常量位姿
-    p_off = np.array(T_off[:3, 3], float)
-    R_off = np.array(T_off[:3, :3], float)
-    dls = make_finger_ik(robot, jn_state, lo7, hi7,
-                         lambda x: state_values(x[:7], FINGER), tip, full=False)
 
-    def ik_fn(pose, s):
-        sol = robot.ik(ARM_GROUP[side], pose, seed=s, tip_link=TCP_LINK[side])
-        if sol is not None:
-            return np.asarray(sol, float)
-        return dls(pose, s)
+MODES = {s.name: s for s in (FullModeStrategy(), FixedModeStrategy(),
+                             TcpModeStrategy())}
 
-    return {
-        "mode": mode, "side": side, "group": ARM_GROUP[side],
-        "tcp": TCP_LINK[side], "tip_frame": tip,
-        "joint_names": arm_names,
-        "set_state": lambda q: robot.env.setState(jn_state, state_values(q, FINGER)),
-        "sample_state": sample_fixed,
-        "seed_plan": arm_seed.copy(),
-        "center": center0 + rot0 @ p_off,
-        "rotation": rot0 @ R_off,               # 指尖的固定姿态（仅记录用）
-        "plan_rotation": rot0,                  # fixed 模式 tcp 目标姿态
-        "tip_offset": p_off,
-        "ik_fn": ik_fn,
-        # distal 也要显式发布：部分 robot_state_publisher 版本不应用 URDF <mimic>，
-        # 只发 proximal 的话渲染出的手指是直的、渲染指尖会偏离预览轨迹
-        "other_pos": {prox_j: FINGER, distal_j: mult * FINGER},
-    }
+
+def _finalize_limits(robot, cfg):
+    """共享装配：全状态限位。策略不重复取限位，调用方拿到的 cfg 必带 limits。"""
+    if cfg.limits is None:
+        lims = robot.get_joint_limits(cfg.group)
+        cfg.limits = (np.array([lims[n]["lower"] for n in cfg.state_joint_names]),
+                      np.array([lims[n]["upper"] for n in cfg.state_joint_names]))
+    return cfg
+
+
+def build_cfg(robot, side, finger, mode, arm_seed):
+    """模式装配入口（兼容签名）：MODES 注册表分发（B7/步 3）。"""
+    return _finalize_limits(robot, MODES[mode].build(robot, side, finger, arm_seed))
+
 
 
 def display_other_pos(side, fingers):
@@ -978,24 +927,21 @@ def build_cfg_multi(robot, side, fingers, mode, arm_seed):
 
     # 副指固定手型并入 other_pos：RvizSim 经 /joint_states 发布渲染，env 状态
     # 在 main 里统一写入后不再变动——规划与碰撞扫描全程可见真实手型
-    cfg.setdefault("other_pos", {})
-    cfg["other_pos"].update(dict(zip(sec_names, sec_pos)))
+    cfg.other_pos.update(dict(zip(sec_names, sec_pos)))
 
     # 种子手型偏移（验证与副指尖历史显示用）：手是刚体，此偏移全程恒定
     robot.env.setState(sec_names, np.asarray(sec_pos, float))
-    cfg["set_state"](cfg["seed_plan"])
+    cfg.set_state(cfg.seed_plan)
     st = robot.env.getState().link_transforms
-    p_main = np.array(st[cfg["tip_frame"]].translation, float)
+    p_main = np.array(st[cfg.tip_frame].translation, float)
     deltas, tip_frames = [], {}
     for f in fingers[1:]:
         tf = tip_link(side, f)
         deltas.append((tf, np.array(st[tf].translation, float) - p_main))
         tip_frames[f] = tf
-    cfg.update({
-        "deltas": deltas,
-        "tip_frames": tip_frames,
-        "extra_fingers": list(fingers[1:]),
-    })
+    cfg.deltas = deltas
+    cfg.tip_frames = tip_frames
+    cfg.extra_fingers = list(fingers[1:])
     return cfg
 
 
@@ -1229,11 +1175,12 @@ class RvizSim:
                 self._next_shape()
 
 
-def main():
+def main(argv=None):
+    args = configure(argv)          # 配置注入：import 无副作用，入口唯一
     print("=" * 60)
-    print(f"天工 Dex 双臂双手形状 demo —— 臂 {ARGS.arm}  指 {'+'.join(FINGER_LIST)}  "
+    print(f"天工 Dex 双臂双手形状 demo —— 臂 {args.arm}  指 {'+'.join(FINGER_LIST)}  "
           f"模式 {MODE}  "
-          f"腰 {ARGS.waist}  {SHAPES}  "
+          f"腰 {args.waist}  {SHAPES}  "
           f"(size = {SIZE*1000:.0f}mm, finger = {FINGER:.2f} rad)")
     print("=" * 60)
 
@@ -1247,12 +1194,7 @@ def main():
             cfg = build_cfg_multi(robot, side, FINGER_LIST, MODE, seed)
         else:
             cfg = build_cfg(robot, side, FINGER_NAME, MODE, seed)
-        if "limits" not in cfg:               # 多指 cfg 已自带按名取的限位
-            limits = robot.get_joint_limits(cfg["group"])
-            cfg["limits"] = {
-                "lo": np.array([limits[j]["lower"] for j in cfg["joint_names"]]),
-                "hi": np.array([limits[j]["upper"] for j in cfg["joint_names"]]),
-            }
+        # 限位已由 build_cfg 共享装配统一填充（_finalize_limits）
         if np.any(OFFSET):                    # 手动微调预览图形/轨迹位置
             cfg["center"] = cfg["center"] + OFFSET
             print(f"  [{side}] 路径中心平移 {np.round(OFFSET, 4)} m -> "
@@ -1310,9 +1252,10 @@ def main():
                 break
             out[side] = (points, Q, ts)
             if (side == "right" and len(SIDES) == 2
-                    and "set_frozen_waist" in cfgs["left"]):
+                    and cfgs["left"].frozen_waist_setter is not None):
                 # 左臂腰 = 右臂首航点腰值的镜像（yaw/roll 反号，pitch 不变）
-                cfgs["left"]["set_frozen_waist"](WAIST_MIRROR * Q[0][:len(WAIST_JOINTS)])
+                cfgs["left"].frozen_waist_setter(
+                    WAIST_MIRROR * Q[0][:len(WAIST_JOINTS)])
         if len(out) < len(SIDES):
             return None, warns
         if len(SIDES) == 2 and not check_dual_collision(robot, cfgs, out):

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<robot name="smoke_bot">
+  <group name="arm">
+    <chain base_link="base_link" tip_link="link2"/>
+  </group>
+  <kinematics_plugin_config filename="file:///opt/tienkung_smoke/smoke_bot_plugins.yaml" />
+  <contact_managers_plugin_config filename="file:///opt/tienkung_smoke/smoke_contact_plugins.yaml" />
+</robot>

@@ -1,0 +1,108 @@
+{
+ "thresholds": {
+  "perr_mm": 0.1,
+  "offplane_mm": 0.5,
+  "secondary_mm": 0.5
+ },
+ "acm_hash": "a6ed0fbb6717b56ac48406a46f8717a181378c8918f4eb92fb764652e9365961",
+ "precheck": "pass",
+ "circle": {
+  "right": {
+   "perr_mm": 0.005451866422515894,
+   "offplane_mm": 0.00240652757382831,
+   "secondary_mm": {
+    "right_thumb_tip_link": 0.008584935913381341
+   },
+   "joint_margin_rad": 0.30024222231956665,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0061788764985935395,
+   "offplane_mm": 0.002424318149146787,
+   "secondary_mm": {
+    "left_thumb_tip_link": 0.15387832527579817
+   },
+   "joint_margin_rad": 0.2937952153185033,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 1.289
+ },
+ "arc": {
+  "right": {
+   "perr_mm": 0.008078574683935393,
+   "offplane_mm": 0.004771398631087109,
+   "secondary_mm": {
+    "right_thumb_tip_link": 0.0071728517678757405
+   },
+   "joint_margin_rad": 0.3002967721265204,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.008219323499344686,
+   "offplane_mm": 0.004932716522243474,
+   "secondary_mm": {
+    "left_thumb_tip_link": 0.1528917858036582
+   },
+   "joint_margin_rad": 0.29407131857530056,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 2.028,
+  "transition_frames": 33
+ },
+ "triangle": {
+  "right": {
+   "perr_mm": 0.006982779667961999,
+   "offplane_mm": 0.004035610228964037,
+   "secondary_mm": {
+    "right_thumb_tip_link": 0.0074296676319508485
+   },
+   "joint_margin_rad": 0.36515241128662934,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0046960108881211,
+   "offplane_mm": 0.0020258073465950766,
+   "secondary_mm": {
+    "left_thumb_tip_link": 0.15377919425175143
+   },
+   "joint_margin_rad": 0.3024362148343429,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.561,
+  "transition_frames": 33
+ },
+ "line": {
+  "right": {
+   "perr_mm": 0.007323603321163613,
+   "offplane_mm": 0.003037429769314759,
+   "secondary_mm": {
+    "right_thumb_tip_link": 0.007802369243650376
+   },
+   "joint_margin_rad": 0.4561867847199401,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.007157768074495641,
+   "offplane_mm": 0.002904595766406448,
+   "secondary_mm": {
+    "left_thumb_tip_link": 0.15171958191783635
+   },
+   "joint_margin_rad": 0.486868715447933,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.558,
+  "transition_frames": 33
+ },
+ "label": "both-fixed-fixed-index_thumb",
+ "result": "ALL PASS",
+ "nanobind": "0.35.0.7",
+ "numpy": "1.26.4"
+}

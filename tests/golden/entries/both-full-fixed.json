@@ -1,0 +1,92 @@
+{
+ "thresholds": {
+  "perr_mm": 0.1,
+  "offplane_mm": 0.5,
+  "secondary_mm": 0.5
+ },
+ "acm_hash": "68db53b75d8b76886ad2a13373b456207c9355c94b89947e5a3d801a12895288",
+ "precheck": "pass",
+ "circle": {
+  "right": {
+   "perr_mm": 0.006315970877522887,
+   "offplane_mm": 0.004070436280978473,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.1234725148297966,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0015651436428260504,
+   "offplane_mm": 0.001168719837074672,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.090217429353606,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 2.056
+ },
+ "arc": {
+  "right": {
+   "perr_mm": 0.0003962052295269755,
+   "offplane_mm": 0.0002971123180539603,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.12485865496864079,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.000976976810581486,
+   "offplane_mm": 0.0007505426932452597,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.09012678438100652,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 2.786,
+  "transition_frames": 33
+ },
+ "triangle": {
+  "right": {
+   "perr_mm": 0.002250773212017266,
+   "offplane_mm": 0.0015792057238839252,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.10307732873716313,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.000976976810581486,
+   "offplane_mm": 0.0007505426932452597,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.16287660422259043,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.823,
+  "transition_frames": 33
+ },
+ "line": {
+  "right": {
+   "perr_mm": 0.0009748157333602788,
+   "offplane_mm": 0.0007480915493740525,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.19426314655891908,
+   "frames": 72,
+   "totg": true
+  },
+  "left": {
+   "perr_mm": 0.0003332313537197705,
+   "offplane_mm": 0.00029551812957828716,
+   "secondary_mm": {},
+   "joint_margin_rad": 0.18679118095279357,
+   "frames": 72,
+   "totg": true
+  },
+  "plan_time_s": 0.698,
+  "transition_frames": 33
+ },
+ "label": "both-full-fixed",
+ "result": "ALL PASS",
+ "nanobind": "0.35.0.7",
+ "numpy": "1.26.4"
+}

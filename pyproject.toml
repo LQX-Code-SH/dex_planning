@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tienkung-planning"
+version = "0.1.0"
+description = "天工 Dex 双臂双手运动规划库（tesseract Descartes/TOTG，RobotProfile 驱动）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "numpy>=1.24,<2",          # 上限：步 0 基线实测 1.26.4；numpy 2.x 未验证
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# 规划后端（真机/开发机装；执行侧只装本包即可读产物，见 N9）
+# 注意：nanobind 绑定 wheel 为本仓库自建（tesseract_nanobind-main 构建），
+# 钉版 = golden 基线实测版本（tests/golden/manifest.json），换版须重捕基线。
+planning = ["tesseract-robotics-nanobind==0.35.0.7"]
+# CLI（traj_plan/time_param 需 planning；traj_check/traj_map 纯读产物可不装）
+app = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tienkung_planning = ["py.typed", "robots/*.yaml"]
