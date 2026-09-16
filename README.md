@@ -39,12 +39,22 @@ tests/run_regression.sh    # 15 单指组合 + 4 多指组合 × 4 形状，head
 
     src/tienkung_planning/
     ├── contracts/        L0 产物契约（PlanArtifact 读写，import 零第三方依赖）
-    ├── core/             L1 防腐层 tess.py（tesseract 唯一居所）+ profile + mode
+    ├── core/             L1 防腐层 tess.py（tesseract 唯一居所）+ profile/mode/pipeline/checks
+    ├── facade/           L3 门面：TienKungPlanner / CollisionApi / TimeParamApi
     ├── robots/           RobotProfile YAML（机型 = 配置）
     └── apps/             CLI：traj_plan / time_param / traj_check / traj_map
 
+```python
+# 门面（v0.2）：组合便捷入口或按能力取用
+from tienkung_planning.facade import TienKungPlanner, PlannerOptions
+planner = TienKungPlanner.from_profile("tienkung_dex",
+                                       options=PlannerOptions(arm="both", waist="free"))
+plan = planner.plan_shape("circle", size=0.10)
+plan.save("circle.traj")
+```
+
 ```bash
-# 离线规划 → 产物
+# CLI 等价入口
 python -m tienkung_planning.apps.traj_plan --arm both --mode full --waist free \
     --shape circle -o out/
 # 执行侧（无需装 tesseract）读产物
@@ -64,5 +74,6 @@ tests/run_golden.sh                 # 19 组合 golden 基线（19/19 ALL PASS�
 python tests/golden_compare.py tests/golden /tmp/golden_step0
 python tests/test_contracts.py      # 契约往返/版本拒绝
 python tests/test_smoke_nomesh.py   # 无 mesh 管线骨架
+python tests/test_facade.py         # 门面三件（§13.1 用法①②）
 PYTHONPATH=src tests/bare_venv_import.sh   # N9 裸 venv import 红线
 ```

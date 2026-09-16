@@ -41,20 +41,28 @@ def load_pipeline():
     return mod
 
 
-def load_robot(profile=None):
-    """按 profile 装载 Robot（time_param / traj_check --contacts 用）。"""
-    profile = profile or load_profile()
-    urdf, srdf = resolve_description(profile)
+def load_robot(profile=None, description_root=None, cache_dir=None):
+    """按 profile 装载 Robot（time_param / traj_check --contacts 用）。
+
+    profile 可以是 dict、profile 名或 .yaml 路径；description_root/cache_dir
+    透传 resolve_description（无 mesh 测试机型需要）。
+    """
+    if not isinstance(profile, dict):
+        profile = load_profile(profile)
+    urdf, srdf = resolve_description(profile,
+                                     description_root=description_root,
+                                     cache_dir=cache_dir)
     from tienkung_planning.core.tess import Robot
     return profile, Robot.from_files(urdf, srdf)
 
 
-def build_robot(profile_name=None):
+def build_robot(profile_name=None, description_root=None, cache_dir=None):
     """profile 名/路径 -> (profile, Robot)；facade 能力件的独立装载入口。
 
     与 load_robot 同体；不经 demo 模块、不读 TIENKUNG_PLANNING_PIPELINE。
     """
-    return load_robot(profile_name)
+    return load_robot(profile_name, description_root=description_root,
+                      cache_dir=cache_dir)
 
 
 def make_context(argv):
@@ -127,6 +135,25 @@ def shape_to_group(ctx, side, shape, points, Q, ts, frozen=None):
                              float(dev.max())),
         secondary=secondary,
         frozen_waist=None if frozen is None else np.asarray(frozen, float))
+
+
+def transition_to_group(ctx, side, Q, ts):
+    """过渡帧序列 -> GroupPlan（uniform 时间源；ideal_path=逐帧 tip FK）。
+
+    过渡是关节空间插值，没有笛卡尔理想路径可比对，误差统计恒零、
+    副指无参照（rigid-hand 随动由 plan_transition 的碰撞扫描保证安全）。
+    """
+    import numpy as np
+    m, robot, cfg = ctx.m, ctx.robot, ctx.cfgs[side]
+    tip = np.array([m.tip_pose(robot, cfg, qq)[0] for qq in Q])
+    return GroupPlan(
+        group_name=cfg.group, joint_names=tuple(cfg.state_joint_names),
+        positions=np.asarray(Q, float), timestamps=np.asarray(ts, float),
+        time_source="uniform", tip_frame=cfg.tip_frame,
+        ideal_path=tip,
+        err_stats=PathErrors(0.0, 0.0, 0.0),
+        secondary={},
+        frozen_waist=None)
 
 
 def make_options(ctx):
