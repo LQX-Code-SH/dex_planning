@@ -30,7 +30,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.312,
+  "plan_time_s": 1.366,
   "transition_frames": 33
  },
  "triangle": {
@@ -44,7 +44,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.307,
+  "plan_time_s": 0.272,
   "transition_frames": 33
  },
  "line": {

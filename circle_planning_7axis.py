@@ -180,6 +180,7 @@ IK_LAM = 1e-2             # 阻尼系数
 IK_TOL = 1e-5             # 收敛残差 (位置 m / 姿态 rad 混合范数)
 IK_TOL_MAX = 5e-4         # 迭代用尽时的接受上限
 IK_MAX_STEP = 0.3         # 单步关节增量限幅 (rad)
+IK_LIMIT_GAIN = 1e-5      # 限位排斥势系数（W5：在任务零空间内把解推离限位；0=关）
 
 
 def _parse_args(argv=None):
@@ -468,7 +469,15 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
                 pp, Rp, _ = fk_all(xp)
                 J[:3, i] = (pp - p) / h
                 J[3:, i] = rot_err(Rp, R) / h
-            dx = np.linalg.solve(J.T @ J + (IK_LAM ** 2) * np.eye(n) + 1e-10 * np.eye(n), J.T @ e)
+            M = J.T @ J + (IK_LAM ** 2) * np.eye(n) + 1e-10 * np.eye(n)
+            dx = np.linalg.solve(M, J.T @ e)
+            if IK_LIMIT_GAIN > 0.0:
+                # 限位排斥：势 φ = -Σ log(x-lo) - Σ log(hi-x) 的梯度，投影到任务零空间，
+                # 使解在不牺牲位姿误差的前提下远离限位（W5）。x 先内缩避免 1/0。
+                xs = np.clip(x, lo + 1e-6, hi - 1e-6)
+                g = -1.0 / (xs - lo) + 1.0 / (hi - xs)
+                P = np.eye(n) - np.linalg.solve(M, J.T @ J)
+                dx = dx - IK_LIMIT_GAIN * (P @ g)
             step = float(np.linalg.norm(dx))
             if step > IK_MAX_STEP:
                 dx *= IK_MAX_STEP / step
