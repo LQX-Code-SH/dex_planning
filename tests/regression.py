@@ -63,17 +63,24 @@ waist_span = {}
 ok = True
 prev_end = None
 for shape in m.SHAPES:
-    results = {}
-    order = list(m.SIDES)
     if len(m.SIDES) == 2 and m.WAIST_ON:
-        order = ["right", "left"]
-    for side in order:
-        tag = side if len(m.SIDES) > 1 else ""
-        points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
-        if points is None:
-            print(f"FAIL {shape} {side}: {reason}")
-            ok = False
-            continue
+        # W2：腰归右臂解出，左臂逐帧跟随物理腰重解（编排内置双臂互碰校验）
+        out, warns = m.plan_both_with_waist(robot, cfgs, shape, u, v)
+    else:
+        out, warns = {}, {}
+        for side in (["right", "left"] if len(m.SIDES) == 2 else list(m.SIDES)):
+            tag = side if len(m.SIDES) > 1 else ""
+            points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
+            if points is None:
+                warns[side] = reason
+                break
+            out[side] = (points, Q, ts)
+    if out is None or len(out) != len(m.SIDES):
+        print(f"FAIL {shape}: {warns or '规划失败'}")
+        ok = False
+        continue
+    results = {}
+    for side, (points, Q, ts) in out.items():
         if ts is None:
             print(f"FAIL {shape} {side}: TOTG 未产出时间戳")
             ok = False
@@ -99,9 +106,6 @@ for shape in m.SHAPES:
                 print(f"FAIL {shape} {side}: 副指 {tf} 随动误差 {serr:.4f}mm")
                 ok = False
         results[side] = (points, Q, ts)
-        if (side == "right" and len(m.SIDES) == 2
-                and cfgs["left"].frozen_waist_setter is not None):
-            cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
     if len(results) == len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs, results):
         print(f"FAIL {shape}: 双臂碰撞")
         ok = False

@@ -35,36 +35,34 @@ def main(argv=None):
     ok = True
     for shape in shapes:
         results = {}
-        order = list(m.SIDES)
         if len(m.SIDES) == 2 and m.WAIST_ON:
-            order = ["right", "left"]      # 腰归属右臂，右先左后（B1 规则）
-        for side in order:
-            tag = side if len(m.SIDES) > 1 else ""
-            points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape,
-                                                 u, v, tag=tag)
-            if points is None or ts is None:
-                print(f"FAIL {shape} {side}: {reason or 'TOTG 未产出时间戳'}")
+            # W2：腰归右臂解出，左臂逐帧跟随物理腰重解（编排内置双臂互碰校验）
+            results, warns = m.plan_both_with_waist(robot, cfgs, shape, u, v)
+            if results is None:
+                print(f"FAIL {shape}: {warns}")
                 ok = False
                 continue
-            results[side] = (points, Q, ts)
-            if (side == "right" and len(m.SIDES) == 2
-                    and cfgs["left"].frozen_waist_setter is not None):
-                cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
-        if len(results) != len(m.SIDES):
-            continue
-        if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
-                                                            results):
-            print(f"FAIL {shape}: 双臂碰撞")
-            ok = False
-        frozen = {}
-        for side in m.SIDES:
-            fz = None
-            if len(m.SIDES) == 2 and side == "left" \
-                    and cfgs["left"].frozen_waist_setter is not None:
-                fz = m.frozen_waist_from_vars(results["right"][1][0])
-            frozen[side] = fz
+        else:
+            for side in (["right", "left"] if len(m.SIDES) == 2
+                         else list(m.SIDES)):
+                tag = side if len(m.SIDES) > 1 else ""
+                points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape,
+                                                     u, v, tag=tag)
+                if points is None or ts is None:
+                    print(f"FAIL {shape} {side}: "
+                          f"{reason or 'TOTG 未产出时间戳'}")
+                    ok = False
+                    continue
+                results[side] = (points, Q, ts)
+            if len(results) != len(m.SIDES):
+                continue
+            if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
+                                                                results):
+                print(f"FAIL {shape}: 双臂碰撞")
+                ok = False
+        # frozen_waist 记账退化：腰是两臂共享的同一组物理关节值（W2 后两臂腰列一致）
         groups = {side: shape_to_group(ctx, side, shape, *results[side],
-                                       frozen=frozen[side])
+                                       frozen=None)
                   for side in results}
         art = make_artifact(ctx, "shape", groups,
                             {s: g.ideal_path for s, g in groups.items()})

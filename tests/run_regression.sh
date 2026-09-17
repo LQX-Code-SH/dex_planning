@@ -1,5 +1,6 @@
 #!/bin/bash
-# 全量回归：15 个既有组合（单指）+ 6 个 W1 yaw-only（free）+ 5 个多指组合
+# 全量回归：9 个无腰组合 + 3 个腰部参与组合 + 3 个多指组合
+# 腰动必须 --arm both（腰是共享关节，单臂+腰动已被 configure 拒绝）；both fixed all 待协商
 source /opt/ros/jazzy/setup.bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate dex
@@ -19,7 +20,7 @@ run() {
   fi
 }
 
-echo "== 既有 15 组合（单指）=="
+echo "== 无腰 9 组合 =="
 run right full
 run right fixed
 run right tcp
@@ -29,26 +30,18 @@ run left tcp
 run both full
 run both fixed
 run both tcp
-run right full all
-run right fixed all
-run left full all
-run left fixed all
-run both full all
-run both fixed all
 
-echo "== W1 yaw-only（--waist free = 只放 yaw）=="
-run right full free
-run right fixed free
-run left full free
-run left fixed free
+echo "== 腰部参与（必须 --arm both：腰是共享关节）=="
 run both full free
 run both fixed free
+run both full all
+# both fixed all：右臂解出的腰把 roll 顶到 ±25° 限位、左臂在该腰下不可达
+# （W2 实测点 49/72）→ 已由腰协商修复（修 23 帧），见 docs/实施计划 W2。
+run both fixed all
 
 echo "== B2 多指组合 =="
 run right full fixed index,thumb
 run right fixed fixed index,thumb
-run right full all index,thumb
-run right full free index,thumb
 run both fixed fixed index,thumb
 
 echo

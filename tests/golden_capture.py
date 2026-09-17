@@ -82,17 +82,24 @@ prev_end = None
 for shape in m.SHAPES:
     results = {}
     shape_entry = {}
-    order = list(m.SIDES)
-    if len(m.SIDES) == 2 and m.WAIST_ON:
-        order = ["right", "left"]
     t0 = time.perf_counter()
-    for side in order:
-        tag = side if len(m.SIDES) > 1 else ""
-        points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
-        if points is None or ts is None:
-            print(f"FAIL {shape} {side}: {reason or 'TOTG 未产出时间戳'}")
-            ok = False
-            continue
+    if len(m.SIDES) == 2 and m.WAIST_ON:
+        # W2：腰归右臂解出，左臂逐帧跟随物理腰重解（编排内置双臂互碰校验）
+        out, warns = m.plan_both_with_waist(robot, cfgs, shape, u, v)
+    else:
+        out, warns = {}, {}
+        for side in (["right", "left"] if len(m.SIDES) == 2 else list(m.SIDES)):
+            tag = side if len(m.SIDES) > 1 else ""
+            points, Q, ts, reason = m.plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
+            if points is None or ts is None:
+                warns[side] = reason or "TOTG 未产出时间戳"
+                break
+            out[side] = (points, Q, ts)
+    if out is None or len(out) != len(m.SIDES):
+        print(f"FAIL {shape}: {warns or '规划失败'}")
+        ok = False
+        continue
+    for side, (points, Q, ts) in out.items():
         key = f"{shape}_{side}"
         arrays[key + "_Q"] = Q
         arrays[key + "_ts"] = ts
@@ -126,9 +133,6 @@ for shape in m.SHAPES:
                              "secondary_mm": sub_errs, "joint_margin_rad": margin,
                              "frames": int(len(Q)), "totg": True}
         results[side] = (points, Q, ts)
-        if (side == "right" and len(m.SIDES) == 2
-                and cfgs["left"].frozen_waist_setter is not None):
-            cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
     shape_entry["plan_time_s"] = round(time.perf_counter() - t0, 3)
     if len(results) == len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs, results):
         print(f"FAIL {shape}: 双臂碰撞")

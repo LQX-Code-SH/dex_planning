@@ -50,7 +50,7 @@
 |---|---|
 | `--arm right\|left\|both` | 单臂或双臂镜像协同 |
 | `--mode full\|fixed\|tcp` | 臂+指耦合全链 / 臂 7-DOF / 仅 tcp 基线 |
-| `--waist fixed\|free\|all` | 腰全锁（默认）/ 只放 yaw（水平旋转，扩工作空间）/ 三关节全放（弯腰抓取等，慎用） |
+| `--waist fixed\|free\|all` | 腰全锁（默认）/ 只放 yaw（水平旋转，扩工作空间）/ 三关节全放（弯腰抓取等，慎用）。**腰动需配 `--arm both`**——腰是左右共享的物理关节，动腰必然同时改变两臂基座 |
 | `--fingers index,thumb` | 多指刚体联动（其余手指平行随动） |
 
 ### 方式二：Python 库（写代码）
@@ -142,7 +142,7 @@ q = plan.groups["right"].positions[0]     # 逐帧关节角 → 喂给 SDK
 ## 改了代码？跑这些
 
 ```bash
-tests/run_regression.sh                    # 19 种组合回归（改逻辑后必跑）
+tests/run_regression.sh                    # 16 种组合回归（改逻辑后必跑）
 tests/run_golden.sh                        # 重捕 golden 基线
 python tests/golden_compare.py tests/golden /tmp/golden_step0   # 与基线比对
 python tests/test_facade.py                # 门面接口

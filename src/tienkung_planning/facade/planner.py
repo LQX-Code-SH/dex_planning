@@ -118,34 +118,30 @@ class TienKungPlanner:
         u = u / np.linalg.norm(u)
         v = np.cross(n, u)
 
-        results, frozen_right_q = {}, None
-        order = list(m.SIDES)
         if len(m.SIDES) == 2 and m.WAIST_ON:
-            order = ["right", "left"]     # 腰归右臂：右先左后（B1 规则）
-        for side in order:
-            tag = side if len(m.SIDES) > 1 else ""
-            points, Q, ts, reason = m.plan_shape(robot, cfgs[side], name,
-                                                 u, v, tag=tag)
-            if points is None or ts is None:
-                raise PlannerError(
-                    f"plan_shape({name!r}) {side} 失败: "
-                    f"{reason or 'TOTG 未产出时间戳'}")
-            results[side] = (points, Q, ts)
-            if (side == "right" and len(m.SIDES) == 2
-                    and cfgs["left"].frozen_waist_setter is not None):
-                frozen_right_q = m.frozen_waist_from_vars(Q[0])
-                cfgs["left"].frozen_waist_setter(frozen_right_q)
-        if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
-                                                            results):
-            raise PlannerError(f"plan_shape({name!r}): 双臂碰撞")
-        frozen = {}
-        for side in m.SIDES:
-            frozen[side] = (frozen_right_q
-                            if len(m.SIDES) == 2 and side == "left"
-                            and cfgs["left"].frozen_waist_setter is not None
-                            else None)
+            # W2：腰归右臂解出，左臂逐帧跟随物理腰重解（编排内置双臂互碰校验）
+            results, warns = m.plan_both_with_waist(robot, cfgs, name, u, v)
+            if results is None:
+                raise PlannerError(f"plan_shape({name!r}): {warns}")
+        else:
+            results = {}
+            for side in (["right", "left"] if len(m.SIDES) == 2
+                         else list(m.SIDES)):
+                tag = side if len(m.SIDES) > 1 else ""
+                points, Q, ts, reason = m.plan_shape(robot, cfgs[side], name,
+                                                     u, v, tag=tag)
+                if points is None or ts is None:
+                    raise PlannerError(
+                        f"plan_shape({name!r}) {side} 失败: "
+                        f"{reason or 'TOTG 未产出时间戳'}")
+                results[side] = (points, Q, ts)
+            if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
+                                                                results):
+                raise PlannerError(f"plan_shape({name!r}): 双臂碰撞")
+        # frozen_waist 不再记账：腰是两臂共享的同一组物理关节值，已逐帧落在
+        # positions 的腰列里（W2 后两臂腰列一致），该字段退化为纯冗余。
         groups = {side: shape_to_group(self._ctx, side, name, *results[side],
-                                       frozen=frozen[side])
+                                       frozen=None)
                   for side in results}
         return make_artifact(self._ctx, "shape", groups,
                              {s: g.ideal_path for s, g in groups.items()})

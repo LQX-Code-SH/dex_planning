@@ -8,22 +8,22 @@
  "precheck": "pass",
  "circle": {
   "right": {
-   "perr_mm": 0.0031131667081871085,
-   "offplane_mm": 6.815099198864694e-05,
+   "perr_mm": 0.004203839489914187,
+   "offplane_mm": 0.0014126308115758324,
    "secondary_mm": {},
    "joint_margin_rad": 0.0,
    "frames": 72,
    "totg": true
   },
   "left": {
-   "perr_mm": 0.0018641631834603592,
-   "offplane_mm": 0.0008356509978435511,
+   "perr_mm": 0.00954556906351616,
+   "offplane_mm": 0.0027904195249173203,
    "secondary_mm": {},
-   "joint_margin_rad": 0.07262221684948189,
+   "joint_margin_rad": 0.0,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 4.114
+  "plan_time_s": 23.565
  },
  "arc": {
   "right": {
@@ -35,14 +35,14 @@
    "totg": true
   },
   "left": {
-   "perr_mm": 0.0005867200702002625,
-   "offplane_mm": 0.0002141010941869581,
+   "perr_mm": 0.0069315739549103954,
+   "offplane_mm": 0.0029246574655972246,
    "secondary_mm": {},
-   "joint_margin_rad": 0.07281982344512983,
+   "joint_margin_rad": 0.14171573789976533,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.67,
+  "plan_time_s": 3.597,
   "transition_frames": 33
  },
  "triangle": {
@@ -55,14 +55,14 @@
    "totg": true
   },
   "left": {
-   "perr_mm": 0.0014010886382923207,
-   "offplane_mm": 0.0005926802545408449,
+   "perr_mm": 0.009129251976013072,
+   "offplane_mm": 0.006073962852098935,
    "secondary_mm": {},
-   "joint_margin_rad": 0.081899854706184,
+   "joint_margin_rad": 0.02430736369042985,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.076,
+  "plan_time_s": 2.618,
   "transition_frames": 33
  },
  "line": {
@@ -75,19 +75,19 @@
    "totg": true
   },
   "left": {
-   "perr_mm": 0.003206809419221393,
-   "offplane_mm": 0.0022982802563575877,
+   "perr_mm": 0.007462361241425908,
+   "offplane_mm": 0.0016252083065437795,
    "secondary_mm": {},
    "joint_margin_rad": 0.1637660453317325,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.591,
+  "plan_time_s": 2.558,
   "transition_frames": 33
  },
  "waist_span_rad": {
   "right": 0.4363323129985824,
-  "left": 0.2725662676668499
+  "left": 0.4363323129985824
  },
  "label": "both-fixed-all",
  "result": "ALL PASS",

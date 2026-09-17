@@ -1,5 +1,5 @@
 #!/bin/bash
-# golden 基线捕捉：26 组合全量实跑（W1 后：原 free 改名 all + 新增 yaw-only free），
+# golden 基线捕捉：16 组合全量实跑（W2 后：腰动必须 --arm both，单臂+腰动被拒），
 # 产出 tests/golden/{*.npz, entries/*.json, manifest.json}
 source /opt/ros/jazzy/setup.bash
 source ~/miniconda3/etc/profile.d/conda.sh
@@ -20,7 +20,7 @@ run() {
   fi
 }
 
-echo "== 既有 15 组合（单指）=="
+echo "== 无腰 9 组合 =="
 run right full
 run right fixed
 run right tcp
@@ -30,26 +30,16 @@ run left tcp
 run both full
 run both fixed
 run both tcp
-run right full all
-run right fixed all
-run left full all
-run left fixed all
-run both full all
-run both fixed all
 
-echo "== W1 yaw-only（--waist free = 只放 yaw）=="
-run right full free
-run right fixed free
-run left full free
-run left fixed free
+echo "== 腰部参与（必须 --arm both：腰是共享关节，单臂+腰动已被 configure 拒绝）=="
 run both full free
 run both fixed free
+run both full all
+run both fixed all
 
 echo "== B2 多指组合 =="
 run right full fixed index,thumb
 run right fixed fixed index,thumb
-run right full all index,thumb
-run right full free index,thumb
 run both fixed fixed index,thumb
 
 python - <<'EOF'

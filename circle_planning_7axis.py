@@ -117,6 +117,8 @@ _CALIB = _PROFILE["calibration"]["right"]
 CENTER_TCP = np.array(_CALIB["center"])
 ROTATION_TCP = np.array(_CALIB["rotation"])
 SEED_ARM = np.array(_CALIB["seed_arm"])
+# 左臂符号模式（find_seed 枚举得出，q_L = s ⊙ SEED_ARM）：把右臂解镜像成左臂种子用。
+LEFT_SIGN = None
 
 # 左右镜像：位置 p' = M·p，旋转 R' = M·R·M（机器人左右对称，左臂 = 右臂镜像）
 MIRROR = np.diag([1.0, -1.0, 1.0])
@@ -161,6 +163,16 @@ RATE = 50.0               # 发布频率 (Hz)
 SHAPE_REPEAT = 2          # 每种形状连续播放次数（TOTG 真实时长 < DURATION，多播几遍）
 TRANSITION_SECONDS = 2.0  # 形状间过渡轨迹时长 (s)
 COLLISION_MARGIN = 0.02   # 碰撞安全裕度 (m)
+# 过渡扫描裕度：只判穿透（R4 修复后必须配这一条）。2cm 裕度下**同手相邻指**天然
+# "接触"（index_distal vs middle_touch 等结构性近距、非物理接触），会把每一次过渡
+# 都误判成碰撞；而真正的碰撞（穿透）在 margin 0 下仍会被检出。
+TRANSITION_MARGIN = 0.0
+# 指尖姿态误差告警阈值（度）。位置误差判据看不见"腕关节被限位夹住"这类问题——
+# 腕主要影响姿态，位置仍可很小（实测 arm_16 贴限位时位置误差仅 0.005 mm）。
+ROT_WARN_DEG = 1.0
+# 轨迹自碰撞扫描裕度：只判穿透。手内相邻指在 2cm 下天然"接触"属结构性近距、非物理
+# 接触（与 check(contacts=True) 的报告口径一致），用 2cm 判据会把整条轨迹误报成碰撞。
+SELF_SCAN_MARGIN = 0.0
 
 # 耦合 IK（DLS）参数
 IK_ITERS = 80
@@ -203,7 +215,10 @@ def _parse_args(argv=None):
 # 组链顺序 = [yaw, roll, pitch]（URDF：waist_33 绕 z、waist_32 绕 x、waist_31 绕 y），
 # 镜像系数对应同一顺序：绕 z(yaw)/x(roll) 的转角在 y 镜像下反号，绕 y(pitch) 不变。
 WAIST_JOINTS = ["waist_33", "waist_32", "waist_31"]
-WAIST_MIRROR = np.array([-1.0, -1.0, 1.0])
+# 注意：腰**不做镜像**。物理腰只有一套，左右臂共享同一组关节值；镜像只适用于目标
+# 路径（cfg.center 已是镜像中心）与臂关节 IK 种子（见 LEFT_SIGN / mirrored_seed）。
+# 历史上曾用 WAIST_MIRROR = [-1,-1,1] 给左臂注入"镜像腰"，规划口径自洽但按真实腰
+# 执行偏差达 109 mm（440 mm/rad），已废弃——不要重新引入。
 # W1 腰部解锁分级：fixed=全锁（默认）、free=只放 yaw（水平旋转，风险低，扩工作空间优先
 # 用它）、all=三关节全放（弯腰抓取等复杂任务才需要，慎用）。取值均为组链保序子集。
 WAIST_SETS = {"fixed": (), "free": ("waist_33",), "all": tuple(WAIST_JOINTS)}
@@ -238,6 +253,11 @@ def configure(argv=None):
     # 的腰值上冻结。非活跃腰不进变量空间（真降维），锁在 frozen_waist 的冻结值上。
     WAIST_ACTIVE = list(WAIST_SETS[args.waist]) if MODE != "tcp" else []
     WAIST_ON = bool(WAIST_ACTIVE)
+    if WAIST_ACTIVE and len(SIDES) == 1:
+        raise SystemExit(
+            "--waist free/all 需配合 --arm both：腰是左右共享的物理关节，动腰会同时"
+            "改变两臂基座——只规划一臂时另一臂会被腰甩动（R4 修复后实测会撞髋）。"
+            "单臂请用 --waist fixed。")
     return args
 
 
@@ -249,13 +269,10 @@ def waist_full_from_active(u):
     return w
 
 
-def frozen_waist_from_vars(q_vars):
-    """轨迹首帧变量向量 -> 对侧冻结腰全量值（活跃腰散回组链顺序后镜像）。
-
-    both+free/all 时左臂腰冻结在右臂解出的腰值上（WAIST_MIRROR 镜像：yaw/roll
-    反号、pitch 不变）。变量向量只含活跃腰前段，非活跃位本就锁死、冻结值 0。
-    """
-    return WAIST_MIRROR * waist_full_from_active(q_vars[:len(WAIST_ACTIVE)])
+def waist_sequence(Q):
+    """轨迹逐帧腰值（组链顺序全量 3 维）——W2 逐帧注入对侧用。"""
+    n = len(WAIST_ACTIVE)
+    return np.array([waist_full_from_active(q[:n]) for q in Q])
 
 
 def make_path(shape, u, v, center, size=SIZE, n=N_POINTS):
@@ -294,13 +311,14 @@ def find_seed(robot, side):
     """
     if side == "right":
         return SEED_ARM.copy()
+    global LEFT_SIGN
     jn_r, jn_l = robot.get_joint_names("right_arm"), robot.get_joint_names("left_arm")
     lim = robot.get_joint_limits("left_arm")
     robot.env.setState(jn_r, SEED_ARM)
     T = robot.env.getState().link_transforms[TCP_LINK["right"]]
     p_t = MIRROR @ np.asarray(T.translation, float)
     R_t = MIRROR @ np.asarray(T.rotation, float) @ MIRROR
-    best = None                            # (dp+dr, dp, dr, q)
+    best = None                            # (dp+dr, dp, dr, q, s)
     for s in itertools.product((1.0, -1.0), repeat=len(jn_l)):
         q = np.asarray(s) * SEED_ARM
         if any(q[i] < lim[jn_l[i]]["lower"] or q[i] > lim[jn_l[i]]["upper"]
@@ -311,9 +329,10 @@ def find_seed(robot, side):
         dp = float(np.linalg.norm(np.asarray(T2.translation, float) - p_t))
         dr = float(np.linalg.norm(rot_err(R_t, np.asarray(T2.rotation, float))))
         if best is None or dp + dr < best[0]:
-            best = (dp + dr, dp, dr, q)
+            best = (dp + dr, dp, dr, q, s)
     # URDF 左右不完全对称（实测残差 ~1mm / 0.003rad），阈值放宽到 5mm / 5mrad
     if best is not None and best[1] < 5e-3 and best[2] < 5e-3:
+        LEFT_SIGN = np.asarray(best[4], float)
         return best[3]
     raise RuntimeError(f"左臂镜像种子求解失败：最优残差 dp={best[1]*1000:.1f}mm "
                        f"dr={best[2]*1000:.1f}mrad")
@@ -448,12 +467,17 @@ def extract_timed_trajectory(robot, results):
 
 
 def _scan_collision(robot, cfgs, qsides, mgr, req, acm):
-    """设置各侧状态后做一次碰撞扫描，返回首个未被 ACM 允许的碰撞对或 None。"""
+    """设置各侧状态后做一次碰撞扫描，返回首个未被 ACM 允许的碰撞对或 None。
+
+    tesseract contactTest **不**抑制 ACM 允许对，返回的是全部接触对，因此这里必须
+    显式跳过允许对：命中"允许"对就当碰撞返回，会把相邻指/结构性重叠的假接触误报
+    为碰撞；反之若只找允许对，真实碰撞会被漏掉（R4 修复，2026-09-17）。
+    """
     for side, cfg in cfgs.items():
         cfg.set_state(qsides[side])
     mgr.setCollisionObjectsTransform(robot.env.getState().link_transforms)
     for l1, l2 in tess.contact_test(mgr, req):
-        if acm.isCollisionAllowed(l1, l2):
+        if not acm.isCollisionAllowed(l1, l2):
             return (l1, l2)
     return None
 
@@ -465,7 +489,7 @@ def plan_transition(robot, cfgs, Q_from, Q_to, n=32, tries=8):
     碰撞扫描；失败再试带随机中间路标点的分段插值。返回 {side: (n+1, dof)}
     帧序列，失败返回 None。按 cfg.state_joint_names 泛化维度，不依赖具体模式。
     """
-    mgr = tess.contact_manager(robot.env, COLLISION_MARGIN)
+    mgr = tess.contact_manager(robot.env, TRANSITION_MARGIN)  # 只判穿透
     req = tess.contact_request()
     acm = tess.acm(robot.env)
     lo = {s: c.limits[0] for s, c in cfgs.items()}
@@ -538,16 +562,25 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
     else:
         ts = None
 
-    # 精度评估：规划出的关节轨迹做 FK，看指尖是否落在目标路径上
-    tip = np.array([tip_pose(robot, cfg, qq)[0] for qq in Q])
+    # 精度评估：规划出的关节轨迹做 FK，看指尖是否落在目标路径上（位置 + 姿态）
+    pos, rot = [], []
+    for qq in Q:
+        p, R = tip_pose(robot, cfg, qq)
+        pos.append(p)
+        rot.append(R)
+    pos, rot = np.array(pos, float), np.array(rot, float)
     n = min(len(Q), len(points))
-    pos_err = np.linalg.norm(tip[:n] - points[:n], axis=1)
-    plane_dev = (tip[:n] - cfg.center) @ PLANE_NORMAL
+    pos_err = np.linalg.norm(pos[:n] - points[:n], axis=1)
+    plane_dev = (pos[:n] - cfg.center) @ PLANE_NORMAL
+    rot_err_deg = max(float(np.degrees(np.linalg.norm(rot_err(cfg.rotation, R))))
+                      for R in rot[:n])
     margin = min(float(np.min(np.minimum(qq - cfg.limits[0], cfg.limits[1] - qq)))
                  for qq in Q)
     dur = f"  时长 {ts[-1]:.2f}s" if ts is not None else ""
+    warn = f"  ⚠姿态超 {ROT_WARN_DEG}°" if rot_err_deg > ROT_WARN_DEG else ""
     print(f"  {label}{shape:9s} {len(Q)} 点  路径误差 {np.max(pos_err)*1000:.4f} mm  "
-          f"离面 {np.max(np.abs(plane_dev))*1000:.4f} mm  关节裕度 {margin:+.3f} rad{dur}")
+          f"离面 {np.max(np.abs(plane_dev))*1000:.4f} mm  姿态误差 {rot_err_deg:.3f}°  "
+          f"关节裕度 {margin:+.3f} rad{dur}{warn}")
 
     # B2 副指验证（不做约束）：副指随主手刚体随动，指尖偏差应与主指同量级
     if cfg.deltas:
@@ -566,6 +599,304 @@ def plan_shape(robot, cfg, shape, u, v, tag=""):
             print(f"  {label}{shape} 规划失败: {reason}")
             return None, None, None, reason
     return points, Q, ts, None
+
+
+# ---------------------------------------------------------------- W2 腰跟随规划
+def shape_targets(cfg, points):
+    """形状路径点 -> 目标位姿（fixed 模式做 tcp 反算，其余直接用）。"""
+    if cfg.tip_offset is not None:
+        R, p_off = cfg.plan_rotation, cfg.tip_offset
+        return [Pose.from_matrix_position(R, list(p - R @ p_off)) for p in points]
+    return [Pose.from_matrix_position(cfg.rotation, list(p)) for p in points]
+
+
+def mirrored_seed(cfg_src, cfg_dst, q_src):
+    """对侧解 -> 本侧种子（臂关节按 LEFT_SIGN 镜像，腰按组链顺序原样带入）。
+
+    机器人左右对称，故"右臂解镜像"几乎就是左臂在同帧腰值下的解——用它初始化的
+    DLS 一两次迭代即收敛，避免链式种子在末端累积漂移导致的 IK 失败。
+    """
+    seed = np.array(cfg_dst.seed_plan, float)
+    nw = len(WAIST_ACTIVE)
+    seed[:nw] = np.asarray(q_src[:nw], float)
+    if LEFT_SIGN is not None:
+        k = len(LEFT_SIGN)
+        seed[nw:nw + k] = LEFT_SIGN * np.asarray(q_src[nw:nw + k], float)
+    return seed
+
+
+def scan_self_collision(robot, cfg, Q, sub=4):
+    """逐段插值碰撞扫描（避障判据），返回首个未被 ACM 允许的接触对或 None。
+
+    sub：每段的插值细分（默认 4 → 段内 1/4 步长），比只测航点更能拦住穿越。
+    裕度取 0（只判穿透）：手内相邻指在 2cm 下天然"接触"属结构性近距、非物理
+    接触（与 check(contacts=True) 的报告口径一致），用 2cm 判据会整条轨迹误报。
+    """
+    mgr = tess.contact_manager(robot.env, SELF_SCAN_MARGIN)
+    req = tess.contact_request()
+    acm = tess.acm(robot.env)
+    cfgs = {cfg.side: cfg}
+    for k in range(len(Q) - 1):
+        for s in range(sub):
+            t = s / sub
+            qs = {cfg.side: (1.0 - t) * Q[k] + t * Q[k + 1]}
+            hit = _scan_collision(robot, cfgs, qs, mgr, req, acm)
+            if hit is not None:
+                return tuple(hit)
+    return None
+
+
+def plan_track_points(robot, cfg, shape, u, v, waist_seq, tag="", scan=True,
+                      seed_seq=None):
+    """W2：腰按 waist_seq 逐帧已知时，逐点求该侧对世界系理想路径的臂轨迹。
+
+    理想路径由本侧 cfg.center 生成（左右臂中心互为镜像，不能共用对侧的路径）。
+    与 plan_shape 的差别：Descartes 无法按航点注入不同腰值，故改为逐点 DLS——
+    每个航点先把该帧腰值注入该侧冻结腰，再以"上一帧解"为 seed 求解（链式传递
+    保证关节连续）。腰动造成的臂基座位姿变化由 IK 自动补偿，因此跟踪的是
+    pelvis 系（世界系）的理想路径，而非"冻结腰假设下"的路径。
+
+    返回 (points, Q, reason)：reason=None 表示成功。
+    """
+    label = f"[{tag}] " if tag else ""
+    points = make_path(shape, u, v, cfg.center)
+    poses = shape_targets(cfg, points)
+    if len(waist_seq) != len(poses):
+        return None, None, (f"腰序列长度 {len(waist_seq)} 与路径点数 {len(poses)} 不一致")
+    setter = cfg.frozen_waist_setter
+    Q = np.zeros((len(poses), len(cfg.state_joint_names)))
+    seed = np.asarray(cfg.seed_plan, float)
+    for k, pose in enumerate(poses):
+        if setter is not None:
+            setter(waist_seq[k])
+        cands = ([np.asarray(seed_seq[k], float)] if seed_seq is not None else []) + [seed]
+        sol = None
+        for s in cands:
+            sol = cfg.ik(pose, s)
+            if sol is not None:
+                break
+        if sol is None:
+            reason = (f"第 {k}/{len(poses)} 点 IK 失败"
+                      f"（腰 {np.round(np.asarray(waist_seq[k], float), 3)}）")
+            print(f"  {label}腰跟随规划失败: {reason}")
+            return None, None, reason
+        Q[k] = np.asarray(sol, float)
+        seed = Q[k]
+    if scan:
+        hit = scan_self_collision(robot, cfg, Q)
+        if hit is not None:
+            reason = f"轨迹碰撞（{hit[0]} | {hit[1]}）"
+            print(f"  {label}腰跟随规划失败: {reason}")
+            return None, None, reason
+    return points, Q, None
+
+
+def merge_time_axes(ts_list):
+    """多侧时间戳合并为公共轴：逐点取最大（单调、只会更慢 → 不违反任何一侧限速）。
+
+    时间轴不统一时，"第 k 帧的腰值"与"第 k 帧的左臂关节"在真实执行时刻上错相，
+    世界系跟踪即失效。取 max 是保守合并：谁需要更慢就整体放慢。
+    """
+    axes = [np.asarray(ts, float) for ts in ts_list if ts is not None]
+    if len(axes) != len(ts_list) or not axes:
+        return None                                   # 有一侧 TOTG 失败 → 回退匀速
+    n = min(len(a) for a in axes)
+    return np.max(np.vstack([a[:n] for a in axes]), axis=0)
+
+
+def timed_trajectory(robot, cfg, Q, dt=0.1):
+    """对裸关节轨迹做 TOTG（用 cfg 的组与 tcp 帧），失败返回 None（上层回退匀速）。
+
+    totg() 只给同一批航点赋时间戳、不重采样，故帧数不变——第 k 帧的腰值仍对应
+    第 k 帧关节，索引对齐不破。
+    """
+    info = robot.get_manipulator_info(cfg.group, tcp_frame=cfg.tcp_frame,
+                                      working_frame=FRAME)
+    out = tess.totg_traj(Q, cfg.state_joint_names, robot.env, info, dt=dt)
+    return None if out is None else out[1]
+
+
+def track_stats(robot, cfg, shape, points, Q, ts, tag=""):
+    """打印腰跟随轨迹的精度/裕度（口径与 plan_shape 的评估一致）。
+
+    同时报**指尖姿态误差**：位置误差看不见腕关节被限位夹住（腕影响姿态为主）。
+    """
+    label = f"[{tag}] " if tag else ""
+    pos, rot = [], []
+    for qq in Q:
+        p, R = tip_pose(robot, cfg, qq)
+        pos.append(p)
+        rot.append(R)
+    pos, rot = np.array(pos, float), np.array(rot, float)
+    n = min(len(Q), len(points))
+    pos_err = np.linalg.norm(pos[:n] - points[:n], axis=1)
+    plane_dev = (pos[:n] - cfg.center) @ PLANE_NORMAL
+    rot_err_deg = max(float(np.degrees(np.linalg.norm(rot_err(cfg.rotation, R))))
+                      for R in rot[:n])
+    margin = min(float(np.min(np.minimum(qq - cfg.limits[0], cfg.limits[1] - qq)))
+                 for qq in Q)
+    dur = f"  时长 {ts[-1]:.2f}s" if ts is not None else ""
+    warn = f"  ⚠姿态超 {ROT_WARN_DEG}°" if rot_err_deg > ROT_WARN_DEG else ""
+    print(f"  {label}{shape:9s} {len(Q)} 点  路径误差 {np.max(pos_err)*1000:.4f} mm  "
+          f"离面 {np.max(np.abs(plane_dev))*1000:.4f} mm  姿态误差 {rot_err_deg:.3f}°  "
+          f"关节裕度 {margin:+.3f} rad{dur}{warn}")
+    return float(np.max(pos_err)), float(rot_err_deg), float(margin)
+
+
+# ---------------------------------------------------------------- W2 腰协商
+W2_MIN_ARM_MARGIN = 0.01      # 协商可接受的臂最小裕度 (rad)
+W2_FRAME_TOL_MM = 0.05        # 协商接受的单帧指尖位置误差上限 (mm)，与 plan_shape 同口径
+WAIST_SEARCH_TRIES = 4        # 腰向中立位收缩的档数
+WAIST_SEARCH_SHRINK = 0.25    # 每档收缩比例
+
+
+def _freeze_cfg(robot, side):
+    """构建"腰由外部逐帧注入"的该侧 cfg——协商阶段两臂对称求解用。"""
+    seed = find_seed(robot, side)
+    if len(FINGER_LIST) > 1:
+        return build_cfg_multi(robot, side, FINGER_LIST, MODE, seed, freeze_waist=True)
+    return build_cfg(robot, side, FINGER_NAME, MODE, seed, freeze_waist=True)
+
+
+def _arm_margin(robot, cfg, q):
+    """该侧臂关节到限位的最小距离 (rad)。"""
+    names = list(cfg.state_joint_names)
+    lo, hi = cfg.limits
+    return min(min(q[names.index(a)] - lo[names.index(a)],
+                   hi[names.index(a)] - q[names.index(a)])
+               for a in robot.get_joint_names(f"{cfg.side}_arm"))
+
+
+def solve_frame(robot, cfg, pose, target, w, seed):
+    """在给定（已知）腰下解一帧。
+
+    返回 (状态, 臂最小裕度, 指尖位置误差 mm)；IK 无解时为 (None, -1, inf)。
+    **必须回算实际位置误差**：make_finger_ik 只在残差超 IK_TOL_MAX 时返回 None，
+    否则可能返回残差仍很大的差解——只判"是否非 None"会把差解误当可行（实测协商
+    按弱判据接受后，重解出的左臂轨迹偏差达 132 mm）。
+    """
+    cfg.frozen_waist_setter(np.asarray(w, float))
+    sol = cfg.ik(pose, seed)
+    if sol is None:
+        return None, -1.0, float("inf")
+    q = np.asarray(sol, float)
+    p, _ = tip_pose(robot, cfg, q)
+    return q, _arm_margin(robot, cfg, q), float(np.linalg.norm(
+        p - np.asarray(target, float)) * 1000.0)
+
+
+def negotiate_waist(robot, cfg_r, cfg_l, poses_r, poses_l, points_r, points_l, wseq):
+    """腰协商（阶段 1）：修掉"某臂在给定腰下不可解或贴限位"的帧。
+
+    候选腰 = 当前腰沿活跃维度**按比例向中立位收缩**（等价于"少用腰"，契合"腰要
+    慎动"的设计意图），取两臂都可解且 min 裕度最大者。只对失败帧搜索，正常帧零
+    额外成本。返回 (修正后腰序列, 修正帧数) 或 (None, 首个修不动的帧号)。
+    """
+    w_out = np.array(wseq, float)
+    n_act = len(WAIST_ACTIVE)
+    s_r = np.asarray(cfg_r.seed_plan, float)
+    fixed = 0
+
+    def eval_pair(k, w, seed_r):
+        """给定腰：先解右臂，再用其镜像当左臂种子（对称结构给的近精确种子）。
+
+        判据是两臂**实际位置误差**都达标，而非"IK 返回了非 None"；左臂不能沿用
+        上一帧的链式种子——腰一改，旧种子就可能落在收敛域外，把可行腰误判成不可行。
+        """
+        a_r, a_rm, e_r = solve_frame(robot, cfg_r, poses_r[k], points_r[k], w, seed_r)
+        if a_r is None or e_r > W2_FRAME_TOL_MM:
+            return None, None, -1.0
+        a_l, a_lm, e_l = solve_frame(robot, cfg_l, poses_l[k], points_l[k], w,
+                                     mirrored_seed(cfg_r, cfg_l, a_r))
+        if a_l is None or e_l > W2_FRAME_TOL_MM:
+            return None, None, -1.0
+        return a_r, a_l, min(a_rm, a_lm)
+
+    for k in range(len(poses_r)):
+        q_r, q_l, score = eval_pair(k, w_out[k], s_r)
+        if q_r is not None and score >= W2_MIN_ARM_MARGIN:
+            s_r = q_r
+            continue
+        best = None
+        for t in range(1, WAIST_SEARCH_TRIES + 1):
+            for j in range(n_act):
+                cand = w_out[k].copy()
+                cand[j] *= max(0.0, 1.0 - WAIST_SEARCH_SHRINK * t)
+                a_r, a_l, sc = eval_pair(k, cand, s_r)
+                if a_r is None:
+                    continue
+                if best is None or sc > best[0]:
+                    best = (sc, cand, a_r, a_l)
+            if best is not None:
+                break
+        if best is None:
+            return None, k
+        _, w_out[k], s_r, _ = best
+        fixed += 1
+    return w_out, fixed
+
+
+def _negotiated_replan(robot, cfgs, shape, u, v, points_r, Qr, reason):
+    """左臂跟随失败后的兜底：协商腰序列，两臂对称地在新腰下重解（阶段 2）。"""
+    print(f"  [W2] {shape}: 左臂跟随失败（{reason}）→ 进入腰协商")
+    cfg_r, cfg_l = _freeze_cfg(robot, "right"), _freeze_cfg(robot, "left")
+    points_l = make_path(shape, u, v, cfg_l.center)
+    poses_r = shape_targets(cfg_r, points_r)
+    poses_l = shape_targets(cfg_l, points_l)
+    w_new, fixed = negotiate_waist(robot, cfg_r, cfg_l, poses_r, poses_l,
+                                   points_r, points_l, waist_sequence(Qr))
+    if w_new is None:
+        return None, {"right": None,
+                      "left": f"{reason}；腰协商未能在第 {fixed} 帧找到两臂可行腰"}
+    print(f"  [W2] 腰协商修复 {fixed} 帧，两臂按共享腰序列重解")
+    pts_r, Qr2, r2 = plan_track_points(robot, cfg_r, shape, u, v, w_new,
+                                       tag="right", seed_seq=list(Qr))
+    if Qr2 is None:
+        return None, {"right": r2, "left": None}
+    pts_l, Ql2, r3 = plan_track_points(
+        robot, cfg_l, shape, u, v, w_new, tag="left",
+        seed_seq=[mirrored_seed(cfg_r, cfg_l, q) for q in Qr2])
+    if Ql2 is None:
+        return None, {"right": None, "left": r3}
+    ts = merge_time_axes([timed_trajectory(robot, cfg_r, Qr2),
+                          timed_trajectory(robot, cfg_l, Ql2)])
+    track_stats(robot, cfg_r, shape, pts_r, Qr2, ts, tag="right")
+    track_stats(robot, cfg_l, shape, pts_l, Ql2, ts, tag="left")
+    out = {"right": (pts_r, Qr2, ts), "left": (pts_l, Ql2, ts)}
+    if not check_dual_collision(robot, cfgs, out):
+        return None, {s: "双臂碰撞" for s in cfgs}
+    return out, {}
+
+
+def plan_both_with_waist(robot, cfgs, shape, u, v):
+    """W2 编排（both + 腰动）：右臂解腰 → 左臂逐帧跟随 → 公共时间轴 → 双臂互碰。
+
+    右臂照旧把腰当变量（B1：腰归右臂）；左臂不再"冻结首帧腰值"，而是把右臂解出的
+    整条腰轨迹当**已知时变输入**逐帧注入后重解臂关节，从而在腰运动下跟踪同一套
+    pelvis 系（世界系）理想路径。时间轴取两臂 TOTG 的逐点最大值，保证第 k 帧腰值与
+    两臂关节在同一时刻生效（不统一则执行时错相，世界系跟踪失效）。
+
+    **注入的是物理腰 w_r 本身，不是 WAIST_MIRROR ⊙ w_r**：物理腰只有一套，左右臂
+    共享同一组关节值。镜像只用于两点——目标路径（cfg.center 已是镜像中心）与 IK
+    种子（mirrored_seed）。实测：注镜像腰时规划口径自洽但按真实腰执行误差达
+    109 mm（440 mm/rad），改注物理腰后自洽=物理=0.005 mm。
+
+    返回 (out, warns)，out = {side: (points, Q, ts)}（失败时 out=None）。
+    """
+    points_r, Qr, tsr, reason = plan_shape(robot, cfgs["right"], shape, u, v, tag="right")
+    if points_r is None:
+        return None, {"right": reason, "left": "依赖右臂（腰轨迹）"}
+    points_l, Ql, reason = plan_track_points(
+        robot, cfgs["left"], shape, u, v, waist_sequence(Qr), tag="left",
+        seed_seq=[mirrored_seed(cfgs["right"], cfgs["left"], q) for q in Qr])
+    if Ql is None:
+        return _negotiated_replan(robot, cfgs, shape, u, v, points_r, Qr, reason)
+    ts = merge_time_axes([tsr, timed_trajectory(robot, cfgs["left"], Ql)])
+    track_stats(robot, cfgs["left"], shape, points_l, Ql, ts, tag="left")
+    out = {"right": (points_r, Qr, ts), "left": (points_l, Ql, ts)}
+    if not check_dual_collision(robot, cfgs, out):
+        return None, {s: "双臂碰撞" for s in cfgs}
+    return out, {}
 
 
 # ------------------------------------------------- 多指顺序规划（B2，自研）
@@ -613,7 +944,7 @@ class _HandAssembly:
     是同一个道理。左臂的基准量（中心/姿态）一律由右臂标定值经 M 镜像得出。
     """
 
-    def __init__(self, robot, side, finger):
+    def __init__(self, robot, side, finger, freeze_waist=False):
         self.robot, self.side, self.finger = robot, side, finger
         spec = FINGERS[finger]
         self.spec = spec
@@ -629,7 +960,10 @@ class _HandAssembly:
 
         self.waist_on = WAIST_ON              # tcp 模式不走本装配，无需再判 mode
         self.waist_act = list(WAIST_ACTIVE)   # 活跃腰关节（组链保序子集，W1 分级）
-        self.waist_owned = self.waist_on and not (len(SIDES) == 2 and side == "left")
+        # freeze_waist=True：该侧的腰由外部逐帧注入（协商流程里两臂对称求解，
+        # 腰不进变量空间）；默认仍按 B1 规则——both 模式下腰归右臂。
+        self.waist_owned = (self.waist_on and not freeze_waist
+                            and not (len(SIDES) == 2 and side == "left"))
         self.frozen_waist = {"w": np.zeros(len(WAIST_JOINTS))}   # 全量 3 维（契约字段）
 
         if self.waist_on:
@@ -723,8 +1057,8 @@ class TcpModeStrategy:
     """tcp 模式（回归基线）：变量 = 臂 7，跟踪 tcp。"""
     name = "tcp"
 
-    def build(self, robot, side, finger, arm_seed):
-        asm = _HandAssembly(robot, side, finger)
+    def build(self, robot, side, finger, arm_seed, freeze_waist=False):
+        asm = _HandAssembly(robot, side, finger, freeze_waist)
         center0, rot0 = _base_pose(side)
         return ModeConfig(
             mode_name=self.name, side=side, group=ARM_GROUP[side],
@@ -746,8 +1080,8 @@ class FullModeStrategy:
     """full 模式：臂+手指耦合全链，主指 prox 是变量。"""
     name = "full"
 
-    def build(self, robot, side, finger, arm_seed):
-        asm = _HandAssembly(robot, side, finger)
+    def build(self, robot, side, finger, arm_seed, freeze_waist=False):
+        asm = _HandAssembly(robot, side, finger, freeze_waist)
 
         if not asm.waist_on:
             seed_state = asm.state_values(arm_seed, FINGER)
@@ -802,8 +1136,8 @@ class FixedModeStrategy:
     """fixed 模式：手指固定在 --finger 值，臂 7-DOF（+腰）带 tcp 走轨迹。"""
     name = "fixed"
 
-    def build(self, robot, side, finger, arm_seed):
-        asm = _HandAssembly(robot, side, finger)
+    def build(self, robot, side, finger, arm_seed, freeze_waist=False):
+        asm = _HandAssembly(robot, side, finger, freeze_waist)
         center0, rot0 = _base_pose(side)
 
         # fixed 模式：手指固定，指尖相对 tcp 的偏移 p_off 是常量。指尖路径中心取
@@ -917,9 +1251,14 @@ def _finalize_limits(robot, cfg):
     return cfg
 
 
-def build_cfg(robot, side, finger, mode, arm_seed):
-    """模式装配入口（兼容签名）：MODES 注册表分发（B7/步 3）。"""
-    return _finalize_limits(robot, MODES[mode].build(robot, side, finger, arm_seed))
+def build_cfg(robot, side, finger, mode, arm_seed, freeze_waist=False):
+    """模式装配入口（兼容签名）：MODES 注册表分发（B7/步 3）。
+
+    freeze_waist=True：腰不入变量空间，改由 frozen_waist_setter 逐帧注入——
+    协商流程里"两臂都在已知腰下求解"就靠它（任意侧可切换，不再固定腰归右臂）。
+    """
+    return _finalize_limits(robot, MODES[mode].build(robot, side, finger, arm_seed,
+                                                     freeze_waist))
 
 
 
@@ -936,7 +1275,7 @@ def display_other_pos(side, fingers):
 
 
 # ---------------------------------------------------------------- 多指配置
-def build_cfg_multi(robot, side, fingers, mode, arm_seed):
+def build_cfg_multi(robot, side, fingers, mode, arm_seed, freeze_waist=False):
     """多指（--fingers ≥2）配置（B2）：手型刚体联动。
 
     灵巧手自由度有限，副指尖与主指尖做共同位置约束（变量 9 个对误差 12 维）
@@ -948,7 +1287,7 @@ def build_cfg_multi(robot, side, fingers, mode, arm_seed):
     验证与历史轨迹显示。full 模式的主指 prox 变量会破坏刚体假设
     （随动误差 ~1-2mm），多指时统一按 fixed 手指语义规划。
     """
-    cfg = build_cfg(robot, side, fingers[0], "fixed", arm_seed)
+    cfg = build_cfg(robot, side, fingers[0], "fixed", arm_seed, freeze_waist)
 
     sec_names, sec_pos = [], []
     for f in fingers[1:]:
@@ -1273,23 +1612,18 @@ def main(argv=None):
     print("  可达性预检通过（形状 ±u/±v 四点）")
 
     def plan_fn(shape):
-        out, warns = {}, {}
-        order = list(SIDES)
         if len(SIDES) == 2 and WAIST_ON:
-            order = ["right", "left"]       # 腰归右臂：先右后左，左臂冻结右臂腰值
+            # W2：右臂与腰绑定（腰是右臂变量），左臂逐帧跟随该腰轨迹重解
+            return plan_both_with_waist(robot, cfgs, shape, u, v)
+        out, warns = {}, {}
+        order = ["right", "left"] if len(SIDES) == 2 else list(SIDES)
         for side in order:
             tag = side if len(SIDES) > 1 else ""
             points, Q, ts, reason = plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
             if points is None:
                 warns[side] = reason
-                if len(SIDES) == 2 and WAIST_ON and side == "right":
-                    warns["left"] = "依赖右臂（腰冻结）"
                 break
             out[side] = (points, Q, ts)
-            if (side == "right" and len(SIDES) == 2
-                    and cfgs["left"].frozen_waist_setter is not None):
-                # 左臂腰 = 右臂首航点腰值的镜像（yaw/roll 反号，pitch 不变）
-                cfgs["left"].frozen_waist_setter(frozen_waist_from_vars(Q[0]))
         if len(out) < len(SIDES):
             return None, warns
         if len(SIDES) == 2 and not check_dual_collision(robot, cfgs, out):
