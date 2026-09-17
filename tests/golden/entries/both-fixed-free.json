@@ -23,7 +23,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 4.082
+  "plan_time_s": 4.027
  },
  "arc": {
   "right": {
@@ -42,7 +42,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 3.948,
+  "plan_time_s": 4.061,
   "transition_frames": 33
  },
  "triangle": {
@@ -62,7 +62,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.744,
+  "plan_time_s": 2.836,
   "transition_frames": 33
  },
  "line": {
@@ -82,7 +82,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.543,
+  "plan_time_s": 2.751,
   "transition_frames": 33
  },
  "waist_span_rad": {

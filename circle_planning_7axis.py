@@ -816,27 +816,40 @@ def negotiate_waist(robot, cfg_r, cfg_l, poses_r, poses_l, points_r, points_l, w
             return None, None, -1.0
         return a_r, a_l, min(a_rm, a_lm)
 
+    prev_fixed, reused = None, 0      # 上一修正帧最终采用的腰（连续性候选）
     for k in range(len(poses_r)):
         q_r, q_l, score = eval_pair(k, w_out[k], s_r)
         if q_r is not None and score >= W2_MIN_ARM_MARGIN:
             s_r = q_r
             continue
         best = None
-        for t in range(1, WAIST_SEARCH_TRIES + 1):
-            for j in range(n_act):
-                cand = w_out[k].copy()
-                cand[j] *= max(0.0, 1.0 - WAIST_SEARCH_SHRINK * t)
-                a_r, a_l, sc = eval_pair(k, cand, s_r)
-                if a_r is None:
-                    continue
-                if best is None or sc > best[0]:
-                    best = (sc, cand, a_r, a_l)
-            if best is not None:
-                break
+        # 候选 0：沿用上一修正帧的腰。腰序列本就该连续、相邻帧的腰需求相近，多数
+        # 时候这一个候选即命中，省掉整轮搜索，同时让腰更平滑（契合"腰要慎动"）。
+        if prev_fixed is not None:
+            a_r, a_l, sc = eval_pair(k, prev_fixed, s_r)
+            if a_r is not None and sc >= W2_MIN_ARM_MARGIN:
+                best = (sc, prev_fixed, a_r, a_l)
+                reused += 1
+        if best is None:
+            for t in range(1, WAIST_SEARCH_TRIES + 1):
+                for j in range(n_act):
+                    cand = w_out[k].copy()
+                    cand[j] *= max(0.0, 1.0 - WAIST_SEARCH_SHRINK * t)
+                    a_r, a_l, sc = eval_pair(k, cand, s_r)
+                    if a_r is None:
+                        continue
+                    if best is None or sc > best[0]:
+                        best = (sc, cand, a_r, a_l)
+                if best is not None:
+                    break
         if best is None:
             return None, k
         _, w_out[k], s_r, _ = best
+        prev_fixed = w_out[k]
         fixed += 1
+    if fixed:
+        print(f"  [W2] 腰协商：{fixed} 帧需改腰，其中 {reused} 帧沿用上一修正帧直接命中"
+              f"（省去整轮搜索）")
     return w_out, fixed
 
 

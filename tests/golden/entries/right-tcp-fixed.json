@@ -15,7 +15,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.45
+  "plan_time_s": 0.483
  },
  "arc": {
   "right": {
@@ -26,7 +26,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.329,
+  "plan_time_s": 1.322,
   "transition_frames": 33
  },
  "triangle": {
@@ -38,7 +38,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.311,
+  "plan_time_s": 0.27,
   "transition_frames": 33
  },
  "line": {
@@ -50,7 +50,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.162,
+  "plan_time_s": 0.164,
   "transition_frames": 33
  },
  "label": "right-tcp-fixed",

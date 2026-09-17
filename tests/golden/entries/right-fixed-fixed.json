@@ -15,7 +15,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.481
+  "plan_time_s": 0.524
  },
  "arc": {
   "right": {
@@ -26,7 +26,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.184,
+  "plan_time_s": 1.208,
   "transition_frames": 33
  },
  "triangle": {
@@ -38,7 +38,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.268,
+  "plan_time_s": 0.269,
   "transition_frames": 33
  },
  "line": {
@@ -50,7 +50,7 @@
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.177,
+  "plan_time_s": 0.173,
   "transition_frames": 33
  },
  "label": "right-fixed-fixed",
