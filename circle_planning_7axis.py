@@ -884,6 +884,7 @@ def negotiate_waist(robot, cfg_r, cfg_l, poses_r, poses_l, points_r, points_l, w
     n_act = len(WAIST_ACTIVE)
     s_r = np.asarray(cfg_r.seed_plan, float)
     fixed = 0
+    subthreshold = 0      # 搜完全部候选仍低于裕度阈值的帧（W5：这些帧仍贴限位）
 
     def eval_pair(k, w, seed_r):
         """给定腰：先解右臂，再用其镜像当左臂种子（对称结构给的近精确种子）。
@@ -928,12 +929,17 @@ def negotiate_waist(robot, cfg_r, cfg_l, poses_r, poses_l, points_r, points_l, w
                     break
         if best is None:
             return None, k
-        _, w_out[k], s_r, _ = best
+        sc, w_out[k], s_r, _ = best
+        if sc < W2_MIN_ARM_MARGIN:
+            subthreshold += 1
         prev_fixed = w_out[k]
         fixed += 1
     if fixed:
         print(f"  [W2] 腰协商：{fixed} 帧需改腰，其中 {reused} 帧沿用上一修正帧直接命中"
               f"（省去整轮搜索）")
+        if subthreshold:
+            print(f"  [W2] ⚠ {subthreshold} 帧搜完全部候选仍低于裕度阈值 "
+                  f"{W2_MIN_ARM_MARGIN:.2f} rad（左臂贴限位，见 W5）")
     return w_out, fixed
 
 
