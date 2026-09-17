@@ -418,6 +418,13 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
     an_cols = [(i, ch, ax, kd) for (i, ch, ax, kd, mim) in ax_cols if not mim]
     fd_cols = [i for (i, ch, ax, kd, mim) in ax_cols if mim] if ax_cols \
         else list(range(n))
+    # 解析列预置成数组，每迭代一次算完所有列。逐列 np.cross 的小数组开销极大
+    # （实测 53051 次 cross 累计 1.6 s，其中大部分花在 normalize_axis_tuple/
+    # moveaxis 这类形状规整上），手写叉积可完全绕开。
+    an_idx = np.array([c[0] for c in an_cols], dtype=int) if an_cols else None
+    an_children = [c[1] for c in an_cols]
+    an_axis = np.array([c[2] for c in an_cols]) if an_cols else None
+    an_pris = np.array([c[3] == "prismatic" for c in an_cols]) if an_cols else None
 
     def fk_all(x):
         """写一次状态 -> (tip 位置, tip 旋转, 全部连杆位姿)。解析列复用同一份位姿。"""
@@ -440,14 +447,21 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
                 return assemble(x) if full else x
             J = np.zeros((6, n))
             h = 1e-6
-            for i, child, axis, kind in an_cols:      # 解析列：复用本次位姿，零额外 FK
-                Tj = lt[child]
-                z = np.array(Tj.rotation, float) @ axis
-                if kind == "prismatic":
-                    J[:3, i] = z
-                else:
-                    J[:3, i] = np.cross(z, p - np.array(Tj.translation, float))
-                    J[3:, i] = z
+            if an_idx is not None:                    # 解析列：复用本次位姿，零额外 FK
+                Rl = np.array([np.asarray(lt[c].rotation, float)
+                               for c in an_children])
+                pl = np.array([np.asarray(lt[c].translation, float)
+                               for c in an_children])
+                Z = np.einsum("kij,kj->ki", Rl, an_axis)   # 各关节轴的世界方向
+                d = p - pl                                 # 关节位置 -> 末端
+                Jv = np.empty_like(Z)                      # 手写叉积，绕开 np.cross
+                Jv[:, 0] = Z[:, 1] * d[:, 2] - Z[:, 2] * d[:, 1]
+                Jv[:, 1] = Z[:, 2] * d[:, 0] - Z[:, 0] * d[:, 2]
+                Jv[:, 2] = Z[:, 0] * d[:, 1] - Z[:, 1] * d[:, 0]
+                J[:3, an_idx] = Jv.T
+                J[3:, an_idx] = Z.T
+                if an_pris.any():                          # 移动副：角速度列为 0
+                    J[3:, an_idx[an_pris]] = 0.0
             for i in fd_cols:                          # 差分列（含手指耦合变量）
                 xp = x.copy()
                 xp[i] += h
