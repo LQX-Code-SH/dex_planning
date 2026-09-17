@@ -25,11 +25,12 @@
            换算后走原 {side}_arm 规划链路。
     tcp    原 demo 行为：{side}_tcp_link 走轨迹（回归用）。
 
-腰部冗余（--waist，B1）：fixed（默认）/ free。
-    free 时腰 3 关节并入变量空间（full/fixed 模式；tcp 恒为 fixed），改善
-    关节裕度与 --offset 可达范围。腰 3 关节是左右臂共享的同一组物理关节，
-    --arm both 时腰只归属右臂变量空间，左臂在右臂解出的腰值（镜像换算）上
-    冻结规划。
+腰部冗余（--waist，B1/W1 分级）：fixed（默认）/ free / all。
+    fixed 腰全锁；free 只放 yaw（waist_33，水平旋转、风险低，扩工作空间优先
+    用它）；all 放三关节（yaw+roll+pitch，弯腰抓取等复杂任务才需要）。仅
+    full/fixed 模式生效，tcp 恒为 fixed。非活跃腰不进变量空间（真降维），
+    锁在冻结值上。腰 3 关节是左右臂共享的同一组物理关节，--arm both 时腰只
+    归属右臂变量空间，左臂在右臂解出的腰值（镜像换算）上冻结规划。
 
 多指联动（--fingers index,thumb，B2）：手型刚体随动。
     参与手指（第一个是主指尖）prox 全部固定在 --finger 值、distal 按耦合跟随，
@@ -49,7 +50,8 @@
     ./run_rviz_sim.sh --arm both --mode full       # 双臂镜像协同
     ./run_rviz_sim.sh --arm left --finger-joint thumb   # 左手拇指
     ./run_rviz_sim.sh --finger 0.9                 # 手指弯曲程度 (rad)
-    ./run_rviz_sim.sh --waist free                 # 腰 3 关节并入变量空间
+    ./run_rviz_sim.sh --waist free                 # 只放腰 yaw（水平旋转，扩工作空间）
+    ./run_rviz_sim.sh --waist all                  # 腰三关节全放（弯腰抓取等，慎用）
     ./run_rviz_sim.sh --fingers index,thumb        # 多指刚体联动（手型保持平行随动）
 
 发布的话题：
@@ -150,7 +152,7 @@ def full_group(side, finger):
 
 
 def waist_group(side, finger):
-    """含腰 3 关节的全链组（--waist free 用，SRDF/插件见 tienkung_dex.srdf）。"""
+    """含腰 3 关节的全链组（--waist free/all 用，SRDF/插件见 tienkung_dex.srdf）。"""
     return _PROFILE["groups"]["waist"].format(side=side, finger=finger)
 
 
@@ -188,16 +190,23 @@ def _parse_args(argv=None):
     ap.add_argument("--offset", nargs=3, type=float, default=(0.0, 0.0, 0.0),
                     metavar=("X", "Y", "Z"),
                     help="路径中心平移 (m, pelvis 系)，微调预览图形/轨迹位置")
-    ap.add_argument("--waist", choices=["fixed", "free"], default="fixed",
-                    help="fixed=腰固定(默认); free=腰3关节并入变量空间(full/fixed模式，"
-                         "tcp 恒为 fixed)。--arm both 时腰只归属右臂，左臂在右臂"
-                         "解出的腰值上冻结规划（腰是左右共享的物理关节）")
+    ap.add_argument("--waist", choices=["fixed", "free", "all"], default="fixed",
+                    help="fixed=腰全锁(默认); free=只放 yaw(waist_33，水平旋转、风险低，"
+                         "优先用它扩工作空间); all=三关节全放(yaw+roll+pitch，弯腰抓取等"
+                         "复杂任务才需要，慎用)。仅 full/fixed 模式生效，tcp 恒为 fixed。"
+                         "--arm both 时腰只归属右臂，左臂在右臂解出的腰值上冻结规划"
+                         "（腰是左右共享的物理关节）")
     return ap.parse_args(argv)
 
 
-# 腰关节名与镜像系数是纯常量（与运行配置无关）；--waist free 的启用判定在 configure()
+# 腰关节名与镜像系数是纯常量（与运行配置无关）；--waist 的启用判定在 configure()。
+# 组链顺序 = [yaw, roll, pitch]（URDF：waist_33 绕 z、waist_32 绕 x、waist_31 绕 y），
+# 镜像系数对应同一顺序：绕 z(yaw)/x(roll) 的转角在 y 镜像下反号，绕 y(pitch) 不变。
 WAIST_JOINTS = ["waist_33", "waist_32", "waist_31"]
 WAIST_MIRROR = np.array([-1.0, -1.0, 1.0])
+# W1 腰部解锁分级：fixed=全锁（默认）、free=只放 yaw（水平旋转，风险低，扩工作空间优先
+# 用它）、all=三关节全放（弯腰抓取等复杂任务才需要，慎用）。取值均为组链保序子集。
+WAIST_SETS = {"fixed": (), "free": ("waist_33",), "all": tuple(WAIST_JOINTS)}
 
 
 def configure(argv=None):
@@ -206,7 +215,7 @@ def configure(argv=None):
     模块导入零副作用；所有依赖运行配置的全局量（MODE/SIDES/FINGER_LIST/…）
     由本函数显式设置，main 与测试脚本都经此入口。返回 args 供横幅打印。
     """
-    global MODE, FINGER_NAME, FINGER_LIST, FINGER, SIDES, OFFSET, SHAPES, WAIST_FREE
+    global MODE, FINGER_NAME, FINGER_LIST, FINGER, SIDES, OFFSET, SHAPES, WAIST_ACTIVE, WAIST_ON
     args = _parse_args(argv)
     MODE = args.mode
     FINGER_NAME = args.finger_joint
@@ -224,11 +233,29 @@ def configure(argv=None):
     OFFSET = np.asarray(args.offset, float)
     SHAPES = args.shapes or ["circle", "arc", "triangle", "line"]
 
-    # B1 腰部冗余：--waist free 时腰 3 关节并入变量空间（full/fixed 模式；tcp 恒 fixed）。
+    # B1/W1 腰部冗余：--waist free 只放 yaw、all 放三关节（仅 full/fixed；tcp 恒 fixed）。
     # 腰 3 关节是左右臂共享的同一组物理关节，--arm both 时只归属右臂，左臂在右臂解出
-    # 的腰值上冻结。镜像系数：绕 z(yaw)/x(roll) 的转角在 y 镜像下反号，绕 y(pitch) 不变。
-    WAIST_FREE = args.waist == "free" and MODE != "tcp"
+    # 的腰值上冻结。非活跃腰不进变量空间（真降维），锁在 frozen_waist 的冻结值上。
+    WAIST_ACTIVE = list(WAIST_SETS[args.waist]) if MODE != "tcp" else []
+    WAIST_ON = bool(WAIST_ACTIVE)
     return args
+
+
+def waist_full_from_active(u):
+    """活跃腰变量 -> 组链顺序的腰全量 3 维（非活跃位取 0，与冻结值一致）。"""
+    w = np.zeros(len(WAIST_JOINTS))
+    for i, jn in enumerate(WAIST_ACTIVE):
+        w[WAIST_JOINTS.index(jn)] = float(u[i])
+    return w
+
+
+def frozen_waist_from_vars(q_vars):
+    """轨迹首帧变量向量 -> 对侧冻结腰全量值（活跃腰散回组链顺序后镜像）。
+
+    both+free/all 时左臂腰冻结在右臂解出的腰值上（WAIST_MIRROR 镜像：yaw/roll
+    反号、pitch 不变）。变量向量只含活跃腰前段，非活跃位本就锁死、冻结值 0。
+    """
+    return WAIST_MIRROR * waist_full_from_active(q_vars[:len(WAIST_ACTIVE)])
 
 
 def make_path(shape, u, v, center, size=SIZE, n=N_POINTS):
@@ -600,11 +627,12 @@ class _HandAssembly:
         self.hi7 = np.array([robot.get_joint_limits(ARM_GROUP[side])[n]["upper"]
                              for n in self.arm_names])
 
-        self.waist_free = WAIST_FREE          # tcp 模式不走本装配，无需再判 mode
-        self.waist_owned = self.waist_free and not (len(SIDES) == 2 and side == "left")
-        self.frozen_waist = {"w": np.zeros(len(WAIST_JOINTS))}
+        self.waist_on = WAIST_ON              # tcp 模式不走本装配，无需再判 mode
+        self.waist_act = list(WAIST_ACTIVE)   # 活跃腰关节（组链保序子集，W1 分级）
+        self.waist_owned = self.waist_on and not (len(SIDES) == 2 and side == "left")
+        self.frozen_waist = {"w": np.zeros(len(WAIST_JOINTS))}   # 全量 3 维（契约字段）
 
-        if self.waist_free:
+        if self.waist_on:
             self.group = waist_group(side, finger)
             jn = robot.get_joint_names(self.group)
             expect = (set(WAIST_JOINTS) | set(self.arm_names)
@@ -637,16 +665,26 @@ class _HandAssembly:
         self.robot.env.setState(self.jn_state,
                                 self.state_values(rng.uniform(self.lo7, self.hi7), FINGER))
 
+    def waist_full(self, u):
+        """活跃腰值 -> 组链顺序的腰全量 3 维（非活跃位/左臂冻结态取 frozen_waist）。"""
+        w = np.array(self.frozen_waist["w"], float)
+        if self.waist_owned:
+            for k, jn in enumerate(self.waist_act):
+                w[WAIST_JOINTS.index(jn)] = float(u[k])
+        return w
+
     def make_waist_state(self, var_names, mode):
-        """构造 waist 模式的变量->组全状态展开器（distal 按耦合显式写入）。"""
+        """构造 waist 模式的变量->组全状态展开器（distal 按耦合显式写入）。
+
+        W1 分级后变量不再是组状态前缀（只放 yaw 时跳过了 roll/pitch），而是组状态的
+        保序子集：展开按关节名写回，种子按变量在状态里的位置索引投影。
+        """
         lims = self.lims
         lo_v = np.array([lims[n]["lower"] for n in var_names])
         hi_v = np.array([lims[n]["upper"] for n in var_names])
-        if self.waist_owned:
-            # 组链顺序 = [腰3, 臂7, (mc,) prox, distal]，变量必须是状态前缀
-            # （warm-start 种子按前 n 个切片）
-            assert list(self.jn_state[:len(var_names)]) == list(var_names), \
-                f"{self.group} 变量前缀异常: {self.jn_state}"
+        idx = [self.jn_state.index(n) for n in var_names]
+        assert idx == sorted(idx) and len(set(idx)) == len(idx), \
+            f"{self.group} 变量须为组状态的保序子集: {var_names} vs {self.jn_state}"
 
         def state_full(x):
             d = dict(zip(var_names, np.asarray(x, float)))
@@ -659,16 +697,13 @@ class _HandAssembly:
                 vals[self.distal_j] = self.mult * FINGER
             if self.mc_j:
                 vals[self.mc_j] = 0.0
-            if self.waist_owned:
-                vals.update({w: d[w] for w in WAIST_JOINTS})
-            else:
-                vals.update(zip(WAIST_JOINTS, self.frozen_waist["w"]))
+            u = [d[jn] for jn in self.waist_act] if self.waist_owned else ()
+            vals.update(zip(WAIST_JOINTS, self.waist_full(u)))
             return np.array([vals[n] for n in self.jn_state])
 
-        # 冻结腰时变量前面垫着腰 3 个状态位，warm-start 种子要跳过
-        tv = None if self.waist_owned else (
-            lambda s: np.asarray(s, float)[len(WAIST_JOINTS):
-                                           len(WAIST_JOINTS) + len(var_names)])
+        def tv(s):
+            # warm-start 种子（组全状态）-> 变量空间：按变量在状态中的位置取
+            return np.asarray(s, float)[idx]
 
         def sample(rng):
             self.robot.env.setState(self.jn_state,
@@ -714,7 +749,7 @@ class FullModeStrategy:
     def build(self, robot, side, finger, arm_seed):
         asm = _HandAssembly(robot, side, finger)
 
-        if not asm.waist_free:
+        if not asm.waist_on:
             seed_state = asm.state_values(arm_seed, FINGER)
             robot.env.setState(asm.jn_state, seed_state)
             T = robot.env.getState().link_transforms[asm.tip]
@@ -735,10 +770,10 @@ class FullModeStrategy:
                 var_names=list(asm.arm_names) + [asm.prox_j],
                 lo=np.append(asm.lo7, 0.0), hi=np.append(asm.hi7, asm.spec["upper"]))
 
-        var_names = (WAIST_JOINTS if asm.waist_owned else []) \
+        var_names = (asm.waist_act if asm.waist_owned else []) \
             + asm.arm_names + [asm.prox_j]
         lo_v, hi_v, state_full, tv, sample_w = asm.make_waist_state(var_names, self.name)
-        seed_vars = np.array(([0.0] * 3 if asm.waist_owned else [])
+        seed_vars = np.array(([0.0] * len(asm.waist_act) if asm.waist_owned else [])
                              + list(arm_seed) + [FINGER])
         seed_state = state_full(seed_vars)
         robot.env.setState(asm.jn_state, seed_state)
@@ -775,7 +810,7 @@ class FixedModeStrategy:
         # 基准中心 + 基准姿态 ∘ p_off，使换算出的 tcp 路径恰好落在 tcp 模式已验证
         # 可行的中心圆上（若围绕种子指尖位置取中心，tcp 路径会偏出腕部可达姿态区，
         # LMA/DLS 都会失败）。左臂用镜像基准，手部镜像精确时结果与右臂严格镜像。
-        if not asm.waist_free:
+        if not asm.waist_on:
             robot.env.setState(asm.jn_state, asm.state_values(arm_seed, FINGER))
             Ttip = robot.env.getState().link_transforms[asm.tip]
             Ttcp = robot.env.getState().link_transforms[TCP_LINK[side]]
@@ -813,9 +848,9 @@ class FixedModeStrategy:
                 other_pos={asm.prox_j: FINGER, asm.distal_j: asm.mult * FINGER},
                 var_names=list(asm.arm_names), lo=asm.lo7, hi=asm.hi7)
 
-        var_names = (WAIST_JOINTS if asm.waist_owned else []) + asm.arm_names
+        var_names = (asm.waist_act if asm.waist_owned else []) + asm.arm_names
         lo_v, hi_v, state_full, tv, sample_w = asm.make_waist_state(var_names, self.name)
-        seed_state = state_full(np.array(([0.0] * 3 if asm.waist_owned else [])
+        seed_state = state_full(np.array(([0.0] * len(asm.waist_act) if asm.waist_owned else [])
                                          + list(arm_seed)))
         robot.env.setState(asm.jn_state, seed_state)
         Ttip = robot.env.getState().link_transforms[asm.tip]
@@ -837,7 +872,7 @@ class FixedModeStrategy:
             if sol is not None:
                 return sol
             sv = (np.asarray(s, float) if tv is None else tv(s))[:len(var_names)]
-            w0 = sv[:len(WAIST_JOINTS)] if asm.waist_owned else asm.frozen_waist["w"]
+            w0 = asm.waist_full(sv[:len(asm.waist_act)])
             robot.env.setState(WAIST_JOINTS, np.asarray(w0, float))
             sol7 = robot.ik(ARM_GROUP[side], pose, seed=sv[-7:],
                             tip_link=TCP_LINK[side])
@@ -1240,22 +1275,21 @@ def main(argv=None):
     def plan_fn(shape):
         out, warns = {}, {}
         order = list(SIDES)
-        if len(SIDES) == 2 and WAIST_FREE:
+        if len(SIDES) == 2 and WAIST_ON:
             order = ["right", "left"]       # 腰归右臂：先右后左，左臂冻结右臂腰值
         for side in order:
             tag = side if len(SIDES) > 1 else ""
             points, Q, ts, reason = plan_shape(robot, cfgs[side], shape, u, v, tag=tag)
             if points is None:
                 warns[side] = reason
-                if len(SIDES) == 2 and WAIST_FREE and side == "right":
+                if len(SIDES) == 2 and WAIST_ON and side == "right":
                     warns["left"] = "依赖右臂（腰冻结）"
                 break
             out[side] = (points, Q, ts)
             if (side == "right" and len(SIDES) == 2
                     and cfgs["left"].frozen_waist_setter is not None):
                 # 左臂腰 = 右臂首航点腰值的镜像（yaw/roll 反号，pitch 不变）
-                cfgs["left"].frozen_waist_setter(
-                    WAIST_MIRROR * Q[0][:len(WAIST_JOINTS)])
+                cfgs["left"].frozen_waist_setter(frozen_waist_from_vars(Q[0]))
         if len(out) < len(SIDES):
             return None, warns
         if len(SIDES) == 2 and not check_dual_collision(robot, cfgs, out):

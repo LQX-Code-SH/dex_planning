@@ -50,7 +50,7 @@ class ModeConfig:
     other_pos: dict = field(default_factory=dict)     # 显示/固定关节值（不参与规划）
 
     # --- 双臂与多指扩展 ---
-    frozen_waist_setter: Optional[Callable] = None    # both+free 左臂：注入冻结腰值（会话状态）
+    frozen_waist_setter: Optional[Callable] = None    # both+free/all 左臂：注入冻结腰值（会话状态）
     deltas: Optional[list] = None         # B2 副指随动 [(tip_frame, delta(3,))]
     tip_frames: Optional[dict] = None     # B2 副指 tip_frame 表
     extra_fingers: Optional[list] = None  # B2 副指列表

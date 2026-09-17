@@ -28,7 +28,7 @@ class PlannerOptions:
 
     arm: str = "right"                    # right | left | both
     mode: str = "full"                    # full | fixed | tcp
-    waist: str = "fixed"                  # fixed | free
+    waist: str = "fixed"                  # fixed（全锁）| free（只放 yaw）| all（三关节）
     finger: str = "index"                 # 主指尖（--finger-joint）
     finger_value: float = 0.6             # 主指弯曲值 (rad)（--finger）
     fingers: tuple = None                 # 多指，如 ("index", "thumb")（--fingers）
@@ -120,7 +120,7 @@ class TienKungPlanner:
 
         results, frozen_right_q = {}, None
         order = list(m.SIDES)
-        if len(m.SIDES) == 2 and m.WAIST_FREE:
+        if len(m.SIDES) == 2 and m.WAIST_ON:
             order = ["right", "left"]     # 腰归右臂：右先左后（B1 规则）
         for side in order:
             tag = side if len(m.SIDES) > 1 else ""
@@ -133,7 +133,7 @@ class TienKungPlanner:
             results[side] = (points, Q, ts)
             if (side == "right" and len(m.SIDES) == 2
                     and cfgs["left"].frozen_waist_setter is not None):
-                frozen_right_q = m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)]
+                frozen_right_q = m.frozen_waist_from_vars(Q[0])
                 cfgs["left"].frozen_waist_setter(frozen_right_q)
         if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
                                                             results):

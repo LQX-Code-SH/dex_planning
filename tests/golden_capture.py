@@ -83,7 +83,7 @@ for shape in m.SHAPES:
     results = {}
     shape_entry = {}
     order = list(m.SIDES)
-    if len(m.SIDES) == 2 and m.WAIST_FREE:
+    if len(m.SIDES) == 2 and m.WAIST_ON:
         order = ["right", "left"]
     t0 = time.perf_counter()
     for side in order:
@@ -119,7 +119,7 @@ for shape in m.SHAPES:
             ok = False
         lo, hi = cfgs[side].limits
         margin = float(min((Q - lo).min(), (hi - Q).min()))
-        w = Q[:, :3] if cfgs[side].group.endswith(f"waist_{primary}") else None
+        w = Q[:, :len(m.WAIST_ACTIVE)] if cfgs[side].group.endswith(f"waist_{primary}") else None
         if w is not None:
             waist_span.setdefault(side, []).append(float(np.abs(w).max()))
         shape_entry[side] = {"perr_mm": perr, "offplane_mm": dev,
@@ -128,8 +128,7 @@ for shape in m.SHAPES:
         results[side] = (points, Q, ts)
         if (side == "right" and len(m.SIDES) == 2
                 and cfgs["left"].frozen_waist_setter is not None):
-            cfgs["left"].frozen_waist_setter(
-                m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)])
+            cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
     shape_entry["plan_time_s"] = round(time.perf_counter() - t0, 3)
     if len(results) == len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs, results):
         print(f"FAIL {shape}: 双臂碰撞")

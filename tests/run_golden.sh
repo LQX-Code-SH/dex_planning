@@ -1,5 +1,6 @@
 #!/bin/bash
-# 步 0 golden 基线捕捉：19 组合全量实跑，产出 tests/golden/{*.npz, entries/*.json, manifest.json}
+# golden 基线捕捉：26 组合全量实跑（W1 后：原 free 改名 all + 新增 yaw-only free），
+# 产出 tests/golden/{*.npz, entries/*.json, manifest.json}
 source /opt/ros/jazzy/setup.bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate dex
@@ -29,6 +30,14 @@ run left tcp
 run both full
 run both fixed
 run both tcp
+run right full all
+run right fixed all
+run left full all
+run left fixed all
+run both full all
+run both fixed all
+
+echo "== W1 yaw-only（--waist free = 只放 yaw）=="
 run right full free
 run right fixed free
 run left full free
@@ -39,6 +48,7 @@ run both fixed free
 echo "== B2 多指组合 =="
 run right full fixed index,thumb
 run right fixed fixed index,thumb
+run right full all index,thumb
 run right full free index,thumb
 run both fixed fixed index,thumb
 
@@ -50,7 +60,7 @@ for p in sorted(glob.glob(os.path.join(d, "entries", "*.json"))):
     e = json.load(open(p))
     entries[e["label"]] = e
 manifest = {
-    "date": "2026-09-16",
+    "date": "2026-09-17",
     "thresholds": entries and next(iter(entries.values()))["thresholds"],
     "acm_hash_by_combo": {k: v["acm_hash"] for k, v in entries.items()},
     "versions": {k: {"nanobind": v["nanobind"], "numpy": v["numpy"]}

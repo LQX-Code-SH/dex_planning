@@ -8,7 +8,8 @@
 #   ./run_rviz_sim.sh --arm left --finger-joint thumb   # 左臂 + 拇指
 #   ./run_rviz_sim.sh --finger 0.9             # 手指弯曲程度 (rad, 四指 0~1.41 / 拇指 0~1.03)
 #   ./run_rviz_sim.sh --offset 0.02 0 0.05     # 平移预览图形/轨迹中心 (m, pelvis 系)
-#   ./run_rviz_sim.sh --waist free             # 腰 3 关节并入变量空间（both 时腰归右臂）
+#   ./run_rviz_sim.sh --waist free             # 只放腰 yaw（水平旋转，扩工作空间；both 时腰归右臂）
+#   ./run_rviz_sim.sh --waist all              # 腰 yaw+roll+pitch 全放（弯腰抓取等，慎用）
 #   ./run_rviz_sim.sh --fingers index,thumb    # 多指联动：主指画轨迹，副指保持手型随动
 #
 # tesseract 现场规划 + 机器人动画 + 指尖历史轨迹，不产生任何中间文件。

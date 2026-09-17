@@ -4,57 +4,57 @@
   "offplane_mm": 0.5,
   "secondary_mm": 0.5
  },
- "acm_hash": "ee7e2c8a566d702321fd2968938072a30643895b8c4137fe6490a2ab703ce8d2",
+ "acm_hash": "4be9b35e4660fd3ea6cbbd4205059c98f73233160e507475b1bc5d41342f84d8",
  "precheck": "pass",
  "circle": {
   "right": {
-   "perr_mm": 0.002772295057058215,
-   "offplane_mm": 0.0001695558118353091,
+   "perr_mm": 0.0003751827764118968,
+   "offplane_mm": 0.00026568221608846976,
    "secondary_mm": {},
-   "joint_margin_rad": 0.0,
+   "joint_margin_rad": 0.0793290804183795,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.881
+  "plan_time_s": 2.158
  },
  "arc": {
   "right": {
-   "perr_mm": 0.0001414017680495724,
-   "offplane_mm": 6.831194643286409e-05,
+   "perr_mm": 0.00028799566228629805,
+   "offplane_mm": 0.0001906197949763655,
    "secondary_mm": {},
-   "joint_margin_rad": 0.024618087285529833,
+   "joint_margin_rad": 0.0808146414827906,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 1.872,
+  "plan_time_s": 1.29,
   "transition_frames": 33
  },
  "triangle": {
   "right": {
-   "perr_mm": 0.0003582478210316894,
-   "offplane_mm": 6.831194643286409e-05,
+   "perr_mm": 0.00038594147919620105,
+   "offplane_mm": 0.0001906197949763655,
    "secondary_mm": {},
-   "joint_margin_rad": 0.05909155839551161,
+   "joint_margin_rad": 0.06231408369991964,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.602,
+  "plan_time_s": 0.439,
   "transition_frames": 33
  },
  "line": {
   "right": {
-   "perr_mm": 7.181690078393843e-05,
-   "offplane_mm": 1.7624678938510385e-05,
+   "perr_mm": 0.00022406513062943345,
+   "offplane_mm": 8.88719540736993e-05,
    "secondary_mm": {},
-   "joint_margin_rad": 0.18297835911463212,
+   "joint_margin_rad": 0.18029109063663729,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.777,
+  "plan_time_s": 0.392,
   "transition_frames": 33
  },
  "waist_span_rad": {
-  "right": 0.4363323129985824
+  "right": 0.14308515635129393
  },
  "label": "right-full-free",
  "result": "ALL PASS",

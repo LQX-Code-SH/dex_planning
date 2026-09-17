@@ -36,7 +36,7 @@ def main(argv=None):
     for shape in shapes:
         results = {}
         order = list(m.SIDES)
-        if len(m.SIDES) == 2 and m.WAIST_FREE:
+        if len(m.SIDES) == 2 and m.WAIST_ON:
             order = ["right", "left"]      # 腰归属右臂，右先左后（B1 规则）
         for side in order:
             tag = side if len(m.SIDES) > 1 else ""
@@ -49,8 +49,7 @@ def main(argv=None):
             results[side] = (points, Q, ts)
             if (side == "right" and len(m.SIDES) == 2
                     and cfgs["left"].frozen_waist_setter is not None):
-                cfgs["left"].frozen_waist_setter(
-                    m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)])
+                cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
         if len(results) != len(m.SIDES):
             continue
         if len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs,
@@ -62,7 +61,7 @@ def main(argv=None):
             fz = None
             if len(m.SIDES) == 2 and side == "left" \
                     and cfgs["left"].frozen_waist_setter is not None:
-                fz = m.WAIST_MIRROR * results["right"][1][0][:len(m.WAIST_JOINTS)]
+                fz = m.frozen_waist_from_vars(results["right"][1][0])
             frozen[side] = fz
         groups = {side: shape_to_group(ctx, side, shape, *results[side],
                                        frozen=frozen[side])

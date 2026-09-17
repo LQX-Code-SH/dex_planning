@@ -65,7 +65,7 @@ prev_end = None
 for shape in m.SHAPES:
     results = {}
     order = list(m.SIDES)
-    if len(m.SIDES) == 2 and m.WAIST_FREE:
+    if len(m.SIDES) == 2 and m.WAIST_ON:
         order = ["right", "left"]
     for side in order:
         tag = side if len(m.SIDES) > 1 else ""
@@ -77,7 +77,7 @@ for shape in m.SHAPES:
         if ts is None:
             print(f"FAIL {shape} {side}: TOTG 未产出时间戳")
             ok = False
-        w = Q[:, :3] if cfgs[side].group.endswith(f"waist_{primary}") else None
+        w = Q[:, :len(m.WAIST_ACTIVE)] if cfgs[side].group.endswith(f"waist_{primary}") else None
         if w is not None:
             waist_span.setdefault(side, []).append(float(np.abs(w).max()))
         tip = np.array([m.tip_pose(robot, cfgs[side], qq)[0] for qq in Q])
@@ -101,8 +101,7 @@ for shape in m.SHAPES:
         results[side] = (points, Q, ts)
         if (side == "right" and len(m.SIDES) == 2
                 and cfgs["left"].frozen_waist_setter is not None):
-            cfgs["left"].frozen_waist_setter(
-                m.WAIST_MIRROR * Q[0][:len(m.WAIST_JOINTS)])
+            cfgs["left"].frozen_waist_setter(m.frozen_waist_from_vars(Q[0]))
     if len(results) == len(m.SIDES) == 2 and not m.check_dual_collision(robot, cfgs, results):
         print(f"FAIL {shape}: 双臂碰撞")
         ok = False

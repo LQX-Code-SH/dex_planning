@@ -1,5 +1,5 @@
 #!/bin/bash
-# 全量回归：15 个既有组合（单指）+ 4 个多指组合
+# 全量回归：15 个既有组合（单指）+ 6 个 W1 yaw-only（free）+ 5 个多指组合
 source /opt/ros/jazzy/setup.bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate dex
@@ -29,6 +29,14 @@ run left tcp
 run both full
 run both fixed
 run both tcp
+run right full all
+run right fixed all
+run left full all
+run left fixed all
+run both full all
+run both fixed all
+
+echo "== W1 yaw-only（--waist free = 只放 yaw）=="
 run right full free
 run right fixed free
 run left full free
@@ -39,6 +47,7 @@ run both fixed free
 echo "== B2 多指组合 =="
 run right full fixed index,thumb
 run right fixed fixed index,thumb
+run right full all index,thumb
 run right full free index,thumb
 run both fixed fixed index,thumb
 
