@@ -5,7 +5,12 @@
 
 重写器：上游交付的 URDF/SRDF 内嵌绝对 file:// 路径（换机即失效，N10）。
 resolve_description 把网格引用重定向到 profile 声明的 mesh_root、SRDF 的
-插件 yaml 引用重定向到实际绝对路径，产物落在缓存目录：
+插件 yaml 引用重定向到实际绝对路径，产物落在缓存目录。
+网格重写为两级策略（修复"换机即 ProfileError"）：① 该路径确实落在本机
+mesh_root 之下 → 用相对路径（与原行为逐字一致）；② 否则按 profile 声明的
+mesh_root 相对路径（如 tienkung_dex/meshes）在旧路径中做**后缀对齐**，取
+其尾部作为相对路径——覆盖"交付物的绝对路径来自另一台机器"这一常态。
+两者都不成立才 fail-fast（真正无法归属的引用）。
   - TIENKUNG_PLANNING_CACHE_DIR 设置时持久缓存，键 = 重写后内容 SHA-256
   - 未设置时一次性临时目录（进程生命周期，OS 负责回收）
 注意：tesseract 的 resource locator 不做百分号解码——file:// URL 即原始
@@ -98,13 +103,24 @@ def resolve_description(profile, description_root=None, cache_dir=None):
     mesh_root_abs = os.path.abspath(mesh_root)
     mesh_url = "file://" + mesh_root_abs + "/"
 
+    # ② 换机场景的后缀锚：profile 声明的 mesh_root 相对路径（posix 分隔）
+    marker = "/" + d["mesh_root"].replace("\\", "/").strip("/") + "/"
+
     def _mesh_sub(m):
-        old = os.path.abspath(m.group(1))
-        rel = os.path.relpath(old, mesh_root_abs)
-        if rel.startswith(".."):
+        raw = m.group(1)
+        # ① 本机同构：引用确实落在本机 mesh_root 之下 —— 与原行为逐字一致
+        rel = os.path.relpath(os.path.abspath(raw), mesh_root_abs)
+        if not rel.startswith(".."):
+            return 'filename="{}{}"'.format(mesh_url, rel)
+        # ② 跨机：交付物里的绝对路径来自别的机器 —— 按 mesh_root 相对路径
+        #    做后缀对齐（如 …/<any-prefix>/tienkung_dex/meshes/a/b.STL → a/b.STL）
+        posix = os.path.abspath(raw).replace("\\", "/")
+        idx = posix.rfind(marker)
+        if idx < 0:
             raise ProfileError(
-                f"网格引用在 mesh_root 之外: {m.group(1)}（mesh_root={mesh_root_abs}）")
-        return 'filename="{}{}"'.format(mesh_url, rel)
+                f"网格引用无法归属: {raw}（本机 mesh_root={mesh_root_abs}；"
+                f"期望含 {marker} 段——若描述树结构不同请核对 profile.mesh_root）")
+        return 'filename="{}{}"'.format(mesh_url, posix[idx + len(marker):])
 
     n_mesh = len(_URL_RE.findall(urdf_text))
     urdf_out = _URL_RE.sub(_mesh_sub, urdf_text)   # 无网格（图元机器人）也合法
