@@ -6,13 +6,34 @@
 
 ## 一图看懂
 
-```mermaid
-flowchart LR
-    A["告诉它你要什么<br>（哪只手 · 哪根手指 · 什么形状）"] --> B["库帮你规划<br>（IK 求解 · 碰撞检查 · 时间参数化）"]
-    B --> C{"你想怎么用？"}
-    C -->|看动画| D["RViz 里实时演示"]
-    C -->|上真机| E["保存为 .traj 轨迹文件"]
-    E --> F["执行程序读取<br>（不需要装 tesseract）"]
+```text
+                     ┌──────────────────────────────────┐
+                     │ 1. 说清需求                       │
+                     │    哪只手、哪根手指、什么形状        │
+                     └────────────────┬─────────────────┘
+                                      │
+                                      v
+                     ┌──────────────────────────────────┐
+                     │ 2. 库自动规划                      │
+                     │    IK 求解、碰撞检查、时间参数化     │
+                     └────────────────┬─────────────────┘
+                                      │
+                                      v
+                              3. 打算怎么用？
+                                      │
+                ┌─────────────────────┴─────────────────────┐
+                │                                           │
+                v                                           v
+┌──────────────────────────────┐            ┌──────────────────────────────┐
+│ RViz 看动画                   │            │ 上真机                        │
+│ 可视化 demo，实时演示描边       │            │ 保存为 .traj 轨迹文件           │
+└──────────────────────────────┘            └───────────────┬──────────────┘
+                                                            │
+                                                            v
+                                            ┌──────────────────────────────┐
+                                            │ 4. 执行程序读取                │
+                                            │    只装本库，不装 tesseract    │
+                                            └──────────────────────────────┘
 ```
 
 ## 快速开始
@@ -29,7 +50,7 @@ flowchart LR
 |---|---|
 | `--arm right\|left\|both` | 单臂或双臂镜像协同 |
 | `--mode full\|fixed\|tcp` | 臂+指耦合全链 / 臂 7-DOF / 仅 tcp 基线 |
-| `--waist free` | 腰 3 关节并入求解（够不着时放开腰） |
+| `--waist fixed\|free\|all` | 腰全锁（默认）/ 只放 yaw（水平旋转，扩工作空间）/ 三关节全放（弯腰抓取等，慎用） |
 | `--fingers index,thumb` | 多指刚体联动（其余手指平行随动） |
 
 ### 方式二：Python 库（写代码）
@@ -82,32 +103,41 @@ q = plan.groups["right"].positions[0]     # 逐帧关节角 → 喂给 SDK
 | 加一种形状 | 写一个普通函数 |
 | 理解某层职责 | 见下方架构图 + `docs/封装方案.md` |
 
-## 项目架构（简化版）
+## 项目架构
 
-四层，依赖只准向下；tesseract 细节被隔离在 `core/tess.py` 一个文件里。
+五层（L0–L4），依赖只准向下 import；tesseract 细节只出现在 `core/tess.py` 一个文件里。
 
-```mermaid
-flowchart TB
-    demo["可视化 demo<br>（RViz 动画，可交互）"] --> lib
-    py["你的 Python 代码"] --> lib
-    cli["命令行工具"] --> lib
+```text
+谁在用：你的 Python 代码、demo（RViz） -> facade/（L3）
+        CLI（python -m tienkung_planning.apps.*） -> apps/（L4）
 
-    subgraph lib ["tienkung_planning 库"]
-        facade["facade 门面<br>好上手：3 行代码规划"] --> core["core 核心<br>规划逻辑 + 模式 + 配置装载"]
-        core --> contracts["contracts 契约<br>.traj 读写，零重依赖"]
-        core --> tess["core/tess 防腐层<br>tesseract 唯一入口"]
-    end
-
-    tess --> tk["tesseract 运动规划库"]
-    contracts -. "执行侧只依赖这层" .-> sdk["真机 SDK"]
+┌──────────────────────────────────────────────────────────────────────────┐
+│ L4 应用层  apps/  （可选安装，pip install .[app]）                       │
+│  traj_plan、time_param、traj_check、traj_map                             │
+│  demo（RViz 动画）留在原仓库：circle_planning_7axis.py                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│ L3 门面层  facade/  （唯一推荐入口，import 本包即需 tesseract）          │
+│  planner.py      TienKungPlanner、PlannerOptions、CheckReport            │
+│  collision.py    CollisionApi                                            │
+│  time_param.py   TimeParamApi、TimedTrajectory                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│ L2 核心层  core/  （不含 tess.py）                                       │
+│  pipeline.py   装配与产物：make_context、build_robot、make_artifact      │
+│  mode.py       模式契约：ModeConfig、ModeStrategy                        │
+│  profile.py    机型装载：load_profile、resolve_description（不碰 tess）  │
+│  checks.py     校验三件：check_structure / check_errors / check_contacts │
+├──────────────────────────────────────────────────────────────────────────┤
+│ L1 防腐层  core/tess.py  （全库唯一 tesseract 入口）                     │
+│  contact_test、acm、descartes_plan、totg、totg_traj                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ L0 契约层  contracts/  （零重依赖：仅 numpy + 标准库，裸 venv 可 import）│
+│  artifact.py     PlanArtifact、GroupPlan、save/load、artifact_hash       │
+│  exceptions.py   TienKungPlanningError、UnavailableError、PlannerError   │
+│  robots/*.yaml   机型配置（数据，非代码）                                │
+└──────────────────────────────────────────────────────────────────────────┘
+依赖方向：只准向下 import（L4 -> L3 -> L2 -> L1 -> L0）
+执行侧 P-B 只依赖 L0：import tienkung_planning.contracts 即可读写 .traj
 ```
-
-    src/tienkung_planning/
-    ├── facade/        门面：TienKungPlanner / CollisionApi / TimeParamApi
-    ├── core/          核心：规划管线、模式策略、profile 装载、校验
-    ├── contracts/     契约：PlanArtifact 产物读写 + 异常（裸 venv 可 import）
-    ├── robots/        机型配置 YAML（换机器人 = 换配置）
-    └── apps/          命令行工具 ×4
 
 ## 改了代码？跑这些
 
