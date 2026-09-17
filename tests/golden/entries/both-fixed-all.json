@@ -8,81 +8,81 @@
  "precheck": "pass",
  "circle": {
   "right": {
-   "perr_mm": 0.009144834378318275,
-   "offplane_mm": 0.004595351526248681,
+   "perr_mm": 0.009145914619340107,
+   "offplane_mm": 0.004596872807516306,
    "secondary_mm": {},
    "joint_margin_rad": 0.0,
    "frames": 72,
    "totg": true
   },
   "left": {
-   "perr_mm": 0.00976725527608718,
-   "offplane_mm": 0.0026833069090570483,
+   "perr_mm": 0.009767143446595905,
+   "offplane_mm": 0.002683571616424185,
    "secondary_mm": {},
    "joint_margin_rad": 0.0,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 12.618
+  "plan_time_s": 6.177
  },
  "arc": {
   "right": {
-   "perr_mm": 0.00017992176430456624,
-   "offplane_mm": 2.4619353833355007e-05,
+   "perr_mm": 0.00017991967396075353,
+   "offplane_mm": 2.4628159289719065e-05,
    "secondary_mm": {},
-   "joint_margin_rad": 0.14171573789976533,
+   "joint_margin_rad": 0.14171562567617058,
    "frames": 72,
    "totg": true
   },
   "left": {
-   "perr_mm": 0.0069315739549103954,
-   "offplane_mm": 0.0029246574655972246,
+   "perr_mm": 0.006931320489872915,
+   "offplane_mm": 0.0029237027475981225,
    "secondary_mm": {},
-   "joint_margin_rad": 0.14171573789976533,
+   "joint_margin_rad": 0.14171562567617058,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 3.863,
+  "plan_time_s": 3.104,
   "transition_frames": 33
  },
  "triangle": {
   "right": {
-   "perr_mm": 0.00028562527537008477,
-   "offplane_mm": 3.270871087868166e-05,
+   "perr_mm": 0.000285622667098625,
+   "offplane_mm": 3.272873033699497e-05,
    "secondary_mm": {},
-   "joint_margin_rad": 0.02430736369042985,
+   "joint_margin_rad": 0.024307384792239206,
    "frames": 72,
    "totg": true
   },
   "left": {
-   "perr_mm": 0.009129251976013072,
-   "offplane_mm": 0.006073962852098935,
+   "perr_mm": 0.009128880650320366,
+   "offplane_mm": 0.006074525395305397,
    "secondary_mm": {},
-   "joint_margin_rad": 0.02430736369042985,
+   "joint_margin_rad": 0.024307384792239206,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.624,
+  "plan_time_s": 1.77,
   "transition_frames": 33
  },
  "line": {
   "right": {
-   "perr_mm": 5.4900210477685844e-05,
-   "offplane_mm": 2.734122706016251e-06,
+   "perr_mm": 5.489617108880869e-05,
+   "offplane_mm": 2.7270575519988682e-06,
    "secondary_mm": {},
-   "joint_margin_rad": 0.1637660453317325,
+   "joint_margin_rad": 0.16376594876750117,
    "frames": 72,
    "totg": true
   },
   "left": {
-   "perr_mm": 0.007462361241425908,
-   "offplane_mm": 0.0016252083065437795,
+   "perr_mm": 0.007462132834966698,
+   "offplane_mm": 0.001624968392316406,
    "secondary_mm": {},
-   "joint_margin_rad": 0.1637660453317325,
+   "joint_margin_rad": 0.16376594876750117,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 2.49,
+  "plan_time_s": 1.743,
   "transition_frames": 33
  },
  "waist_span_rad": {

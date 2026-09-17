@@ -343,7 +343,47 @@ def find_seed(robot, side):
 
 
 # ---------------------------------------------------------------- 耦合 IK
-def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=None):
+_URDF_JF_CACHE = None
+
+
+def urdf_joint_frames():
+    """URDF 关节 -> (child_link, 单位轴, 类型, 是否与其他关节耦合)。
+
+    解析雅可比（W3-①）用：关节轴在 child link 系下表达，配合该连杆的世界位姿即可
+    算出该关节对末端的速度贡献。只读一次并缓存。
+
+    耦合判定（coupled）两种方向都要算：
+      - 自身带 <mimic>：运动由别的关节决定，不是独立变量；
+      - 驱动了别的 <mimic> 关节（如手指 prox 带动 distal）：它的雅可比列必须含
+        被驱动关节的运动贡献。
+    URDF 里 <mimic> 写在**从动**关节上（distal 跟随 prox），所以只判"自身带 mimic"
+    会漏掉 prox 这一列——那正是最常见的情形。
+    """
+    global _URDF_JF_CACHE
+    if _URDF_JF_CACHE is None:
+        import xml.etree.ElementTree as ET
+        d, self_mimic, drivers = {}, set(), set()
+        for j in ET.parse(URDF).getroot().findall("joint"):
+            name = j.get("name")
+            ax = j.find("axis")
+            a = np.array([float(v) for v in ax.get("xyz").split()], float) \
+                if ax is not None else np.array([1.0, 0.0, 0.0])
+            nrm = float(np.linalg.norm(a))
+            mim = j.find("mimic")
+            if mim is not None:
+                self_mimic.add(name)
+                drivers.add(mim.get("joint"))
+            d[name] = (j.find("child").get("link"),
+                       a / nrm if nrm > 0 else a,
+                       j.get("type") or "revolute")
+        _URDF_JF_CACHE = {
+            k: (c, a, t, (k in self_mimic) or (k in drivers))
+            for k, (c, a, t) in d.items()}
+    return _URDF_JF_CACHE
+
+
+def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=None,
+                   var_names=None):
     """手指耦合 DLS IK 工厂。
 
     变量 x：full 模式 = [arm7, prox]（8 个），返回完整状态向量；fixed 模式 =
@@ -355,13 +395,36 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
 
     to_vars：把 IK 种子（可能是含腰前缀的全状态向量）投影到变量空间的函数；
     缺省直接取前 n 个（变量是状态前缀的情形，见 build_cfg 的腰部冻结分支）。
+
+    var_names（W3-① 优化，可选）：变量名序列。给出则启用**解析雅可比**——
+    每次 setState 取回的 link_transforms 本就含全部连杆（含各关节坐标系），
+    非耦合变量的雅可比列可由「关节轴 × 连杆位姿」直接构造，无需为该列再打一次
+    FK：每迭代由 (1+n) 次 FK 降为 (1+k) 次（k = 耦合列数，通常 1）。
+    **与其他关节耦合**的变量（自身被 <mimic> 驱动，或驱动了别的 <mimic> 关节，
+    如手指 prox 带动 distal）仍走数值差分——耦合系数由 assemble 决定，用差分才能
+    保证与状态写入完全一致。var_names 缺省、变量缺失或 child link 不在场景中时
+    整条退回原数值差分路径（行为不变）。
     """
     n = len(lo)
 
-    def fk(x):
+    # 解析列 / 差分列的划分。child link 必须真实存在于场景（否则整条退回差分）。
+    ax_cols = []
+    if var_names is not None and len(var_names) == n:
+        jf = urdf_joint_frames()
+        if all(v in jf and v in jn_state for v in var_names):
+            links = set(robot.get_link_names())
+            if all(jf[v][0] in links for v in var_names):
+                ax_cols = [(i,) + jf[v] for i, v in enumerate(var_names)]
+    an_cols = [(i, ch, ax, kd) for (i, ch, ax, kd, mim) in ax_cols if not mim]
+    fd_cols = [i for (i, ch, ax, kd, mim) in ax_cols if mim] if ax_cols \
+        else list(range(n))
+
+    def fk_all(x):
+        """写一次状态 -> (tip 位置, tip 旋转, 全部连杆位姿)。解析列复用同一份位姿。"""
         robot.env.setState(jn_state, assemble(x))
-        T = robot.env.getState().link_transforms[tip_frame]
-        return np.array(T.translation, float), np.array(T.rotation, float)
+        lt = robot.env.getState().link_transforms
+        T = lt[tip_frame]
+        return np.array(T.translation, float), np.array(T.rotation, float), lt
 
     def ik(pose, seed):
         sv = np.asarray(seed, float) if to_vars is None else to_vars(seed)
@@ -370,19 +433,26 @@ def make_finger_ik(robot, jn_state, lo, hi, assemble, tip_frame, full, to_vars=N
         R_t = pose.rotation_matrix
         e_norm = None
         for _ in range(IK_ITERS):
-            p, R = fk(x)
+            p, R, lt = fk_all(x)
             e = np.concatenate([p_t - p, rot_err(R_t, R)])
             e_norm = float(np.linalg.norm(e))
             if e_norm < IK_TOL:
                 return assemble(x) if full else x
             J = np.zeros((6, n))
             h = 1e-6
-            for i in range(n):
+            for i, child, axis, kind in an_cols:      # 解析列：复用本次位姿，零额外 FK
+                Tj = lt[child]
+                z = np.array(Tj.rotation, float) @ axis
+                if kind == "prismatic":
+                    J[:3, i] = z
+                else:
+                    J[:3, i] = np.cross(z, p - np.array(Tj.translation, float))
+                    J[3:, i] = z
+            for i in fd_cols:                          # 差分列（含手指耦合变量）
                 xp = x.copy()
                 xp[i] += h
-                pp, Rp = fk(xp)
+                pp, Rp, _ = fk_all(xp)
                 J[:3, i] = (pp - p) / h
-                M = ((Rp - R) / h) @ R.T
                 J[3:, i] = rot_err(Rp, R) / h
             dx = np.linalg.solve(J.T @ J + (IK_LAM ** 2) * np.eye(n) + 1e-10 * np.eye(n), J.T @ e)
             step = float(np.linalg.norm(dx))
@@ -1117,7 +1187,8 @@ class FullModeStrategy:
                 ik=make_finger_ik(
                     robot, asm.jn_state, np.append(asm.lo7, 0.0),
                     np.append(asm.hi7, asm.spec["upper"]),
-                    lambda x: asm.state_values(x[:7], x[7]), asm.tip, full=True),
+                    lambda x: asm.state_values(x[:7], x[7]), asm.tip, full=True,
+                    var_names=list(asm.arm_names) + [asm.prox_j]),
                 var_names=list(asm.arm_names) + [asm.prox_j],
                 lo=np.append(asm.lo7, 0.0), hi=np.append(asm.hi7, asm.spec["upper"]))
 
@@ -1140,7 +1211,7 @@ class FullModeStrategy:
             center=np.array(T.translation, float),
             rotation=np.array(T.rotation, float),
             ik=make_finger_ik(robot, asm.jn_state, lo_v, hi_v, state_full, asm.tip,
-                              full=True, to_vars=tv),
+                              full=True, to_vars=tv, var_names=list(var_names)),
             var_names=list(var_names), lo=lo_v, hi=hi_v)
         if not asm.waist_owned:              # both 模式左臂：右臂规划后注入冻结腰值
             def set_frozen(w, cell=asm.frozen_waist):
@@ -1172,7 +1243,7 @@ class FixedModeStrategy:
             R_off = np.array(T_off[:3, :3], float)
             dls = make_finger_ik(robot, asm.jn_state, asm.lo7, asm.hi7,
                                  lambda x: asm.state_values(x[:7], FINGER),
-                                 asm.tip, full=False)
+                                 asm.tip, full=False, var_names=list(asm.arm_names))
 
             def ik_fn(pose, s):
                 sol = robot.ik(ARM_GROUP[side], pose, seed=s, tip_link=TCP_LINK[side])
@@ -1212,7 +1283,7 @@ class FixedModeStrategy:
         p_off = np.array(T_off[:3, 3], float)
         R_off = np.array(T_off[:3, :3], float)
         dls = make_finger_ik(robot, asm.jn_state, lo_v, hi_v, state_full, asm.tip,
-                             full=True, to_vars=tv)
+                             full=True, to_vars=tv, var_names=list(var_names))
 
         def ik_fn(pose, s):
             # 带腰 DLS 为主（腰是冗余自由度，可改善裕度/可达性）；失败退回

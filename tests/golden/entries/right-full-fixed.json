@@ -8,49 +8,49 @@
  "precheck": "pass",
  "circle": {
   "right": {
-   "perr_mm": 0.006315970877522887,
-   "offplane_mm": 0.004070436280978473,
+   "perr_mm": 0.0063160339230375695,
+   "offplane_mm": 0.004070434304948023,
    "secondary_mm": {},
-   "joint_margin_rad": 0.1234725148297966,
+   "joint_margin_rad": 0.12347254872763225,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.682
+  "plan_time_s": 0.578
  },
  "arc": {
   "right": {
-   "perr_mm": 0.0003962052295269755,
-   "offplane_mm": 0.0002971123180539603,
+   "perr_mm": 0.0003961794864554313,
+   "offplane_mm": 0.0002971099787585363,
    "secondary_mm": {},
-   "joint_margin_rad": 0.12485865496864079,
+   "joint_margin_rad": 0.12485868580701753,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.98,
+  "plan_time_s": 0.786,
   "transition_frames": 33
  },
  "triangle": {
   "right": {
-   "perr_mm": 0.002250773212017266,
-   "offplane_mm": 0.0015792057238839252,
+   "perr_mm": 0.002250831709069709,
+   "offplane_mm": 0.0015792615950527278,
    "secondary_mm": {},
-   "joint_margin_rad": 0.10307732873716313,
+   "joint_margin_rad": 0.10307697099255231,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.391,
+  "plan_time_s": 0.246,
   "transition_frames": 33
  },
  "line": {
   "right": {
-   "perr_mm": 0.0009748157333602788,
-   "offplane_mm": 0.0007480915493740525,
+   "perr_mm": 0.0009748229734472861,
+   "offplane_mm": 0.000748096546709931,
    "secondary_mm": {},
-   "joint_margin_rad": 0.19426314655891908,
+   "joint_margin_rad": 0.19426296364360285,
    "frames": 72,
    "totg": true
   },
-  "plan_time_s": 0.33,
+  "plan_time_s": 0.174,
   "transition_frames": 33
  },
  "label": "right-full-fixed",
