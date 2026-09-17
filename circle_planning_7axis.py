@@ -258,6 +258,10 @@ def configure(argv=None):
             "--waist free/all 需配合 --arm both：腰是左右共享的物理关节，动腰会同时"
             "改变两臂基座——只规划一臂时另一臂会被腰甩动（R4 修复后实测会撞髋）。"
             "单臂请用 --waist fixed。")
+    if args.waist == "all":
+        print("注意 --waist all：yaw+roll+pitch 三关节全放。roll/pitch 会改变躯干姿态，"
+              "实测还会顶到 ±25° 限位、进而收紧工作空间并触发腰协商（circle 单形状多花"
+              "约 20s）。除非确需弯腰抓取，请优先用 --waist free（只放 yaw）。")
     return args
 
 
